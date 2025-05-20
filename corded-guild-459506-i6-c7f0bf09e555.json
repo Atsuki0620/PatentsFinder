@@ -2,7 +2,7 @@
   "type": "service_account",
   "project_id": "corded-guild-459506-i6",
   "private_key_id": "c7f0bf09e555b0fb0ccf4182f4c1ede36ef6f10d",
-  "private_key": "${{ secrets.GCP_PRIVATE_KEY }}",
+  "private_key": "${{ secrets.private_key }}",
   "client_email": "bigquery-user@corded-guild-459506-i6.iam.gserviceaccount.com",
   "client_id": "110930764010906915102",
   "auth_uri": "https://accounts.google.com/o/oauth2/auth",
