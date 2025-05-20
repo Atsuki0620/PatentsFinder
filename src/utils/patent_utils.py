@@ -1,0 +1,204 @@
+import os
+import json
+import yaml
+import openai
+import numpy as np
+import pandas as pd
+from google.cloud import bigquery
+from google.oauth2 import service_account
+import faiss
+from typing import List, Dict, Any
+
+class PatentSearchUtils:
+    def __init__(self, config_path: str):
+        """設定の初期化"""
+        with open(config_path, 'r', encoding='utf-8') as f:
+            self.config = yaml.safe_load(f)
+        
+        # OpenAIクライアントの初期化
+        self.openai_client = openai.OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+          # BigQuery認証設定
+        credentials_path = os.getenv('GOOGLE_CREDENTIALS_PATH')
+        if not credentials_path:
+            # 環境変数が設定されていない場合はデフォルトパスを使用
+            credentials_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 
+                                          'corded-guild-459506-i6-c7f0bf09e555.json')
+        
+        self.credentials = service_account.Credentials.from_service_account_file(credentials_path)
+        
+        # BigQueryクライアント
+        self.bq_client = bigquery.Client(
+            credentials=self.credentials,
+            project=self.credentials.project_id,  # 実行プロジェクトID
+            location='US'  # patents-public-dataはUSリージョンにあります
+        )
+
+    def generate_search_params(self, user_input: str) -> Dict[str, Any]:
+        """ユーザー入力から検索パラメータを生成"""
+        response = self.openai_client.chat.completions.create(
+            model=self.config['defaults']['llm_model'],
+            messages=[
+                {'role': 'system', 'content': self.config['prompts']['system_search']},
+                {'role': 'user', 'content': user_input}
+            ],
+            temperature=0
+        )
+        
+        try:
+            params = json.loads(response.choices[0].message.content.strip())
+        except (json.JSONDecodeError, AttributeError):
+            params = {}
+        
+        # パラメータの検証と設定
+        if not params.get('publication_from'):
+            params['publication_from'] = self.config['defaults']['publication_from']
+            params['publication_from'] = self.config['defaults']['publication_from']
+        
+        return params
+
+    def build_query(self, params: Dict[str, Any]) -> str:
+        """検索パラメータからSQLクエリを構築"""
+        # フィルター文字列の生成
+        ipc_filter = " OR ".join([f"ipc.code LIKE '{ipc}%'"
+                                for ipc in params.get('ipc_codes', [])])
+        if not ipc_filter:
+            ipc_filter = "1=1"
+            
+        assignee_filter = " OR ".join([f"LOWER(assignee.name) LIKE '%{a.lower()}%'"
+                                     for a in params.get('assignees', [])])
+        if not assignee_filter:
+            assignee_filter = "1=1"
+          # 公開日のフィルター処理
+        try:
+            pub_date = str(params.get('publication_from', ''))
+            if not pub_date or not pub_date.strip():
+                pub_date = self.config['defaults']['publication_from']
+            pub_date_thr = int(pub_date.replace("-", ""))
+        except (ValueError, AttributeError):
+            pub_date_thr = int(self.config['defaults']['publication_from'].replace("-", ""))
+        return f"""
+        SELECT
+          p.publication_number,
+          (SELECT v.text FROM UNNEST(p.title_localized) AS v
+           WHERE v.language='en' LIMIT 1) AS title,
+          (SELECT v.text FROM UNNEST(p.abstract_localized) AS v
+           WHERE v.language='en' LIMIT 1) AS abstract,
+          p.publication_date,
+          p.filing_date,
+          STRING_AGG(DISTINCT ipc.code, ',') AS ipc_codes,
+          STRING_AGG(DISTINCT assignee.name, ',') AS assignees
+        FROM `patents-public-data.patents.publications` AS p,
+             UNNEST(p.ipc) AS ipc,
+             UNNEST(p.assignee_harmonized) AS assignee
+        WHERE p.publication_date >= {pub_date_thr}
+          AND ({ipc_filter})
+          AND ({assignee_filter})
+        GROUP BY
+          p.publication_number,
+          title,
+          abstract,
+          p.publication_date,
+          p.filing_date
+        LIMIT {self.config['bigquery']['limit']};
+        """
+
+    def search_patents(self, query: str) -> pd.DataFrame:
+        """BigQueryで特許を検索"""
+        return self.bq_client.query(query).to_dataframe()
+
+    def get_embeddings(self, texts: List[str]) -> np.ndarray:
+        """テキストの埋め込みベクトルを取得"""
+        embeds = []
+        batch_size = self.config['defaults']['batch_size']
+        
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i:i + batch_size]
+            response = self.openai_client.embeddings.create(
+                input=batch,
+                model=self.config['defaults']['embedding_model']
+            )
+            embeds.extend([d.embedding for d in response.data])
+        
+        return np.array(embeds, dtype='float32')
+
+    def build_faiss_index(self, df: pd.DataFrame) -> None:
+        """FAISSインデックスを構築して保存"""
+        # テキスト準備
+        documents = (df['title'].fillna('') + "\n\n" + df['abstract'].fillna('')).tolist()
+        
+        # 埋め込み取得
+        embeddings = self.get_embeddings(documents)
+        
+        # インデックス構築
+        dim = embeddings.shape[1]
+        index = faiss.IndexFlatL2(dim)
+        index.add(embeddings)
+        
+        # 検索結果をCSVとして保存
+        df.to_csv(self.config['paths']['raw_data'], index=False, encoding='utf-8-sig')
+        
+        # 保存
+        os.makedirs(os.path.dirname(self.config['paths']['faiss_index']), exist_ok=True)
+        faiss.write_index(index, self.config['paths']['faiss_index'])
+        
+        # ID対応付けの保存
+        with open(self.config['paths']['faiss_mapping'], 'w', encoding='utf-8') as f:
+            json.dump(df['publication_number'].tolist(), f)
+
+    def search_similar_patents(self, query_text: str, k: int = None) -> List[Dict[str, Any]]:
+        """類似特許を検索"""
+        if k is None:
+            k = self.config['defaults']['max_results']
+            
+        # クエリの埋め込み
+        query_embedding = self.get_embeddings([query_text])[0]
+        
+        # インデックスとIDのロード
+        index = faiss.read_index(self.config['paths']['faiss_index'])
+        with open(self.config['paths']['faiss_mapping'], 'rb') as f:
+            ids = json.load(f)
+            
+        # 類似度検索
+        distances, indices = index.search(
+            query_embedding.reshape(1, -1),
+            k
+        )
+        
+        # メタデータの読み込み
+        df = pd.read_csv(self.config['paths']['raw_data'])
+        
+        # 結果の整形
+        results = []
+        for idx in indices[0]:
+            pub = ids[idx]
+            title = df.loc[df.publication_number == pub, 'title'].values[0]
+            abstract = df.loc[df.publication_number == pub, 'abstract'].values[0]
+            assignees = df.loc[df.publication_number == pub, 'assignees'].values[0]
+            filing_date = df.loc[df.publication_number == pub, 'filing_date'].values[0] if 'filing_date' in df.columns else ''
+            results.append({
+                'publication_number': pub,
+                'title': title,
+                'abstract': abstract,
+                'applicant': assignees,
+                'filing_date': filing_date
+            })
+            
+        return results
+
+    def generate_summary(self, text: str) -> str:
+        """特許の内容を要約"""
+        prompt = (
+            "以下の特許の要約を、特許調査の専門家として日本語で2行以内で要約してください。\n\n"
+            f"{text}"
+        )
+        
+        response = self.openai_client.chat.completions.create(
+            model=self.config['defaults']['llm_model'],
+            messages=[
+                {'role': 'system', 'content': self.config['prompts']['system_summary']},
+                {'role': 'user', 'content': prompt}
+            ],
+            temperature=0
+        )
+        
+        return response.choices[0].message.content.strip()
