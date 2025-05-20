@@ -8,6 +8,11 @@ from src.utils.patent_utils import PatentSearchUtils
 # 環境変数の読み込み
 load_dotenv()
 
+# \n付き1行を JSON にセットする
+import os, json
+sa_info = json.loads(os.getenv("corded-guild-459506-i6-67e3661c726b.json"))
+sa_info["private_key"] = os.getenv("PRIVATE_KEY")  # \n入り1行
+
 # 設定ファイルの読み込み
 @st.cache_resource
 def load_config():
