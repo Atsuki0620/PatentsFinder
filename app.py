@@ -8,6 +8,11 @@ from src.utils.patent_utils import PatentSearchUtils
 # 環境変数の読み込み
 load_dotenv()
 
+
+# ▼ ① 環境変数から取り出す（GitHub Actions / Streamlit Cloud では Secrets に設定しておく）
+sa_json_str = os.getenv("GCP_SERVICE_ACCOUNT_JSON", "{}")   # 例: {"type": "...", ...}
+private_key = os.getenv("PRIVATE_KEY", "")                  # 例: -----BEGIN PRIVATE KEY-----\nMIIEv...
+
 # \n付き1行を JSON にセットする
 import os, json
 sa_info = json.loads(os.getenv("corded-guild-459506-i6-67e3661c726b.json"))
