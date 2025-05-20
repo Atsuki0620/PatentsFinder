@@ -13,6 +13,27 @@ import os, json
 sa_info = json.loads(os.getenv("corded-guild-459506-i6-67e3661c726b.json"))
 sa_info["private_key"] = os.getenv("PRIVATE_KEY")  # \n入り1行
 
+# ▼ ② JSON にパースして private_key を上書き
+try:
+    sa_info = json.loads(sa_json_str)
+    sa_info["private_key"] = private_key
+
+    st.success("サービスアカウント情報を読み込みました")
+    st.json(sa_info)          # 展開して中身を確認
+except json.JSONDecodeError as e:
+    st.error(f"JSON のパースに失敗しました: {e}")
+    st.code(sa_json_str)      # 失敗時は元文字列を表示
+
+
+
+
+
+
+
+
+
+
+
 # 設定ファイルの読み込み
 @st.cache_resource
 def load_config():
