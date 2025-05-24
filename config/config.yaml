@@ -1,19 +1,24 @@
+# デフォルトのモデルやバッチサイズ設定
 defaults:
   llm_model: "gpt-4-turbo-preview"
   embedding_model: "text-embedding-3-small"
   publication_from: "2015-01-01"
   batch_size: 20
 
+# BigQuery 設定: プロジェクトID・データセット・テーブル・リージョン
 bigquery:
   project_id: "corded-guild-459506-i6"
-  dataset: "patents"
-  table: "publications"
+  dataset: "patents"       # 実際に BigQuery で作成済みのデータセット名に変更してください
+  table: "publications"    # 実際のテーブル名に変更してください
+  location: "asia-northeast1"  # データセットのロケーション
   limit: 100
 
+# FAISS インデックス等のパス
 paths:
   faiss_index: "data/index/patents.faiss"
   faiss_mapping: "data/index/mapping.json"
 
+# LLM および埋め込み用プロンプト
 prompts:
   system_search: |
     あなたは特許調査の専門家です。
