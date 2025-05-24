@@ -14,9 +14,7 @@ class PatentSearchUtils:
         credentials: service_account.Credentials,
         openai_api_key: str
     ):
-        # 設定の読み込み
         self.config = config
-
         # OpenAI 新クライアントの初期化
         self.openai_client = OpenAI(api_key=openai_api_key)
         self.llm_model = config['defaults']['llm_model']
@@ -24,7 +22,7 @@ class PatentSearchUtils:
         self.publication_from = config['defaults']['publication_from']
         self.batch_size = config['defaults']['batch_size']
 
-        # BigQuery クライアント
+        # BigQuery クライアント設定
         bq_conf = config['bigquery']
         self.bq_client = bigquery.Client(
             credentials=credentials,
@@ -35,7 +33,7 @@ class PatentSearchUtils:
         self.table = bq_conf['table']
         self.limit = bq_conf['limit']
 
-        # FAISS ファイルパス
+        # FAISS 関連パス
         self.faiss_index_path = config['paths']['faiss_index']
         self.faiss_mapping_path = config['paths']['faiss_mapping']
 
@@ -47,29 +45,23 @@ class PatentSearchUtils:
         resp = self.openai_client.chat.completions.create(
             model=self.llm_model,
             messages=[
-                {'role': 'system',  'content': self.system_search_prompt},
-                {'role': 'user',    'content': user_input}
+                {'role': 'system', 'content': self.system_search_prompt},
+                {'role': 'user', 'content': user_input}
             ],
             temperature=0
         )
         params = json.loads(resp.choices[0].message.content.strip())
-        # 辞書形式のipc_codesが来た場合はリストへ変換
+        # 辞書形式ならリスト化
         if isinstance(params.get('ipc_codes'), dict):
             params['ipc_codes'] = list(params['ipc_codes'].values())
-        # publication_fromが空ならデフォルトを適用
         if not params.get('publication_from'):
             params['publication_from'] = self.publication_from
         return params
 
     def build_query(self, params: Dict[str, Any]) -> str:
-        # 日付を整数（YYYYMMDD）比較用に整形
         pub_from = params['publication_from'].replace('-', '')
-
-        # IPC条件
         ipc_filters = [f"ipc.code LIKE '{code}%'" for code in params.get('ipc_codes', [])]
         ipc_clause = ' OR '.join(ipc_filters) if ipc_filters else 'TRUE'
-
-        # 出願人条件
         assignee_filters = [f"LOWER(assignee.name) LIKE LOWER('%{name}%')" for name in params.get('assignees', [])]
         assignee_clause = ' OR '.join(assignee_filters) if assignee_filters else 'TRUE'
 
@@ -131,8 +123,8 @@ class PatentSearchUtils:
         resp = self.openai_client.chat.completions.create(
             model=self.llm_model,
             messages=[
-                {'role': 'system',  'content': self.system_summary_prompt},
-                {'role': 'user',    'content': text}
+                {'role': 'system', 'content': self.system_summary_prompt},
+                {'role': 'user', 'content': text}
             ],
             temperature=0
         )
