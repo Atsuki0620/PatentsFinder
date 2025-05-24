@@ -1,15 +1,12 @@
 import os
-import sys
 import json
 import yaml
 import pandas as pd
 import streamlit as st
 from google.oauth2 import service_account
 
-# プロジェクトルート/src をモジュール検索パスに追加（src をパッケージとして利用）
-sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
-
-from utils.patent_utils import PatentSearchUtils
+# src をパッケージとしてインポート（プロジェクトルートが sys.path に含まれている）
+from src.utils.patent_utils import PatentSearchUtils
 
 # ─── Secrets 取得 ────────────────────────────────────────────
 sa_info = st.secrets.get("GCP_SERVICE_ACCOUNT") or os.getenv("GCP_SERVICE_ACCOUNT")
@@ -39,6 +36,7 @@ def get_utils() -> PatentSearchUtils:
         openai_api_key=openai_key
     )
 
+
 def main():
     st.title("🔍 特許調査支援システム")
     mode = st.sidebar.radio("検索モード", ["キーワード検索", "類似特許検索"], index=0)
@@ -46,6 +44,7 @@ def main():
         keyword_search()
     else:
         similar_search()
+
 
 
 def keyword_search():
@@ -74,6 +73,7 @@ def keyword_search():
                 st.success("📦 FAISS インデックスを構築しました")
             except Exception as e:
                 st.error(f"エラーが発生しました: {e}")
+
 
 
 def similar_search():
