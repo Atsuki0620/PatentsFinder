@@ -1,13 +1,17 @@
 import os
+import sys
 import json
 import yaml
 import pandas as pd
 import streamlit as st
 from google.oauth2 import service_account
-from src.utils.patent_utils import PatentSearchUtils
+
+# プロジェクトルート/src をモジュール検索パスに追加（src をパッケージとして利用）
+sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
+
+from utils.patent_utils import PatentSearchUtils
 
 # ─── Secrets 取得 ────────────────────────────────────────────
-# Streamlit Cloud: st.secrets、GitHub Actions／ローカル: ENV どちらにも対応
 sa_info = st.secrets.get("GCP_SERVICE_ACCOUNT") or os.getenv("GCP_SERVICE_ACCOUNT")
 if not sa_info:
     st.error("GCP のサービスアカウント情報が設定されていません。GCP_SERVICE_ACCOUNT を設定してください。")
