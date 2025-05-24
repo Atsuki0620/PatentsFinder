@@ -56,21 +56,50 @@ class PatentSearchUtils:
         return json.loads(resp.choices[0].message.content.strip())
 
     def build_query(self, params: Dict[str, Any]) -> str:
-        clauses = []
-        if params.get('ipc_codes'):
-            codes = ", ".join([f"'{c}'" for c in params['ipc_codes']])
-            clauses.append(f"ipc_code IN ({codes})")
-        if params.get('assignees'):
-            names = " OR ".join([
-                f"LOWER(applicant) LIKE LOWER('%{name}%')" for name in params['assignees']
-            ])
-            clauses.append(f"({names})")
-        pub_from = params.get('publication_from', self.publication_from)
-        clauses.append(f"publication_date >= '{pub_from}'")
-
-        where = " AND ".join(clauses)
+        """
+        英語タイトル・抄録を取り、IPC／出願人を集約する BigQuery SQL を組み立て
+        """
+        # 日付は整数型(YYYYMMDD)として比較
+        pub_from = params.get("publication_from", self.publication_from)
+        # ユーザーが YYYY-MM-DD 形式を渡してくる場合はハイフンを除去
+        if isinstance(pub_from, str) and "-" in pub_from:
+            pub_from = pub_from.replace("-", "")
+    
+        # IPC フィルタ (コードプレフィックスで LIKE 検索)
+        ipc_filters = []
+        for code in params.get("ipc_codes", []):
+            # 末尾に % を付けて PREFIX 検索
+            ipc_filters.append(f"ipc.code LIKE '{code}%'")
+        ipc_clause = " OR ".join(ipc_filters) or "TRUE"
+    
+        # 出願人フィルタ (部分一致)
+        assignee_filters = []
+        for name in params.get("assignees", []):
+            assignee_filters.append(f"LOWER(assignee.name) LIKE LOWER('%{name}%')")
+        assignee_clause = " OR ".join(assignee_filters) or "TRUE"
+    
         table_ref = f"`{self.config['bigquery']['project_id']}.{self.dataset}.{self.table}`"
-        return f"SELECT * FROM {table_ref} WHERE {where} LIMIT {self.limit}"
+    
+        sql = f"""
+        SELECT
+          p.publication_number,
+          (SELECT v.text FROM UNNEST(p.title_localized)    AS v WHERE v.language='en' LIMIT 1) AS title,
+          (SELECT v.text FROM UNNEST(p.abstract_localized) AS v WHERE v.language='en' LIMIT 1) AS abstract,
+          p.publication_date,
+          STRING_AGG(DISTINCT ipc.code, ',')     AS ipc_codes,
+          STRING_AGG(DISTINCT assignee.name, ',') AS assignees
+        FROM {table_ref} AS p,
+             UNNEST(p.ipc)                 AS ipc,
+             UNNEST(p.assignee_harmonized) AS assignee
+        WHERE
+          p.publication_date >= {pub_from}
+          AND ({ipc_clause})
+          AND ({assignee_clause})
+        GROUP BY
+          p.publication_number, title, abstract, p.publication_date
+        LIMIT {self.limit}
+        """
+        return sql.strip()
 
     def search_patents(self, query: str) -> pd.DataFrame:
         job = self.bq_client.query(query)
