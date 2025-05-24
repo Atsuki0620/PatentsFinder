@@ -1,5 +1,4 @@
 import json
-import yaml
 from openai import OpenAI
 import numpy as np
 import pandas as pd
@@ -25,12 +24,12 @@ class PatentSearchUtils:
         self.publication_from = config['defaults']['publication_from']
         self.batch_size = config['defaults']['batch_size']
 
-        # BigQuery クライアント: location 指定を追加
+        # BigQuery クライアント
         bq_conf = config['bigquery']
         self.bq_client = bigquery.Client(
             credentials=credentials,
             project=bq_conf['project_id'],
-            location=bq_conf.get('location', None)
+            location=bq_conf['location']
         )
         self.dataset = bq_conf['dataset']
         self.table = bq_conf['table']
@@ -48,38 +47,33 @@ class PatentSearchUtils:
         resp = self.openai_client.chat.completions.create(
             model=self.llm_model,
             messages=[
-                {'role': 'system', 'content': self.system_search_prompt},
-                {'role': 'user',   'content': user_input}
+                {'role': 'system',  'content': self.system_search_prompt},
+                {'role': 'user',    'content': user_input}
             ],
             temperature=0
         )
-        return json.loads(resp.choices[0].message.content.strip())
+        params = json.loads(resp.choices[0].message.content.strip())
+        # 辞書形式のipc_codesが来た場合はリストへ変換
+        if isinstance(params.get('ipc_codes'), dict):
+            params['ipc_codes'] = list(params['ipc_codes'].values())
+        # publication_fromが空ならデフォルトを適用
+        if not params.get('publication_from'):
+            params['publication_from'] = self.publication_from
+        return params
 
     def build_query(self, params: Dict[str, Any]) -> str:
-        """
-        英語タイトル・抄録を取り、IPC／出願人を集約する BigQuery SQL を組み立て
-        """
-        # 日付は整数型(YYYYMMDD)として比較
-        pub_from = params.get("publication_from", self.publication_from)
-        # ユーザーが YYYY-MM-DD 形式を渡してくる場合はハイフンを除去
-        if isinstance(pub_from, str) and "-" in pub_from:
-            pub_from = pub_from.replace("-", "")
-    
-        # IPC フィルタ (コードプレフィックスで LIKE 検索)
-        ipc_filters = []
-        for code in params.get("ipc_codes", []):
-            # 末尾に % を付けて PREFIX 検索
-            ipc_filters.append(f"ipc.code LIKE '{code}%'")
-        ipc_clause = " OR ".join(ipc_filters) or "TRUE"
-    
-        # 出願人フィルタ (部分一致)
-        assignee_filters = []
-        for name in params.get("assignees", []):
-            assignee_filters.append(f"LOWER(assignee.name) LIKE LOWER('%{name}%')")
-        assignee_clause = " OR ".join(assignee_filters) or "TRUE"
-    
+        # 日付を整数（YYYYMMDD）比較用に整形
+        pub_from = params['publication_from'].replace('-', '')
+
+        # IPC条件
+        ipc_filters = [f"ipc.code LIKE '{code}%'" for code in params.get('ipc_codes', [])]
+        ipc_clause = ' OR '.join(ipc_filters) if ipc_filters else 'TRUE'
+
+        # 出願人条件
+        assignee_filters = [f"LOWER(assignee.name) LIKE LOWER('%{name}%')" for name in params.get('assignees', [])]
+        assignee_clause = ' OR '.join(assignee_filters) if assignee_filters else 'TRUE'
+
         table_ref = f"`{self.config['bigquery']['project_id']}.{self.dataset}.{self.table}`"
-    
         sql = f"""
         SELECT
           p.publication_number,
@@ -109,17 +103,15 @@ class PatentSearchUtils:
         abstracts = df['abstract'].fillna('').tolist()
         embeddings = []
         for i in range(0, len(abstracts), self.batch_size):
-            batch = abstracts[i:i + self.batch_size]
             resp = self.openai_client.embeddings.create(
                 model=self.embedding_model,
-                input=batch
+                input=abstracts[i:i+self.batch_size]
             )
             embeddings.extend([d['embedding'] for d in resp.data])
         arr = np.array(embeddings, dtype='float32')
         index = faiss.IndexFlatL2(arr.shape[1])
         index.add(arr)
         faiss.write_index(index, self.faiss_index_path)
-
         with open(self.faiss_mapping_path, 'w', encoding='utf-8') as f:
             json.dump(df.to_dict(orient='records'), f, ensure_ascii=False, indent=2)
 
@@ -139,8 +131,8 @@ class PatentSearchUtils:
         resp = self.openai_client.chat.completions.create(
             model=self.llm_model,
             messages=[
-                {'role': 'system', 'content': self.system_summary_prompt},
-                {'role': 'user',   'content': text}
+                {'role': 'system',  'content': self.system_summary_prompt},
+                {'role': 'user',    'content': text}
             ],
             temperature=0
         )
