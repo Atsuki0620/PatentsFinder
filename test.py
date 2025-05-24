@@ -1,37 +1,33 @@
-import os
+import streamlit as st
 import json
-import sys
 from google.oauth2 import service_account
 
-def main():
-    # 1. 環境変数から Secret を取得
-    sa_json = os.environ.get("GCP_SERVICE_ACCOUNT")
-    if not sa_json:
-        print("❌ エラー: 環境変数 GCP_SERVICE_ACCOUNT が設定されていません。")
-        sys.exit(1)
+st.title("🔐 GCP Service Account Secret テスト")
 
-    # 2. JSON としてパースし、キーの存在をチェック
-    try:
-        info = json.loads(sa_json)
-    except json.JSONDecodeError as e:
-        print(f"❌ エラー: JSON のパースに失敗しました: {e}")
-        sys.exit(1)
+# 1. st.secrets から JSON 文字列を取得
+sa_json = st.secrets.get("GCP_SERVICE_ACCOUNT")
+if not sa_json:
+    st.error("❌ st.secrets['GCP_SERVICE_ACCOUNT'] が設定されていません。")
+    st.stop()
 
-    required_keys = ["type", "project_id", "private_key", "client_email", "token_uri"]
-    missing = [k for k in required_keys if k not in info]
-    if missing:
-        print(f"❌ エラー: 以下のキーが Secret JSON に見つかりません: {missing}")
-        sys.exit(1)
+# 2. JSON としてパース
+try:
+    info = json.loads(sa_json)
+except json.JSONDecodeError as e:
+    st.error(f"❌ JSON のパースに失敗しました: {e}")
+    st.stop()
 
-    # 3. Credentials オブジェクトを実際に作ってみる
-    try:
-        creds = service_account.Credentials.from_service_account_info(info)
-    except Exception as e:
-        print(f"❌ エラー: Credentials の生成に失敗しました: {e}")
-        sys.exit(1)
+# 3. 必須キーのチェック
+required_keys = ["type", "project_id", "private_key", "client_email", "token_uri"]
+missing = [k for k in required_keys if k not in info]
+if missing:
+    st.error(f"❌ 以下のキーが足りません: {missing}")
+    st.stop()
 
-    # 4. 成功メッセージ
-    print("✅ 成功: GCP_SERVICE_ACCOUNT が読み込まれ、Credentials が生成できました。")
-
-if __name__ == "__main__":
-    main()
+# 4. Credentials を生成してみる
+try:
+    creds = service_account.Credentials.from_service_account_info(info)
+    st.success("✅ Credentials の生成に成功しました！")
+    st.write("プロジェクトID:", creds.project_id)
+except Exception as e:
+    st.error(f"❌ Credentials の生成でエラー: {e}")
