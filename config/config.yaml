@@ -10,7 +10,6 @@ bigquery:
   project_id: "corded-guild-459506-i6"
   dataset: "patents"       # 実際に BigQuery で作成済みのデータセット名に変更してください
   table: "publications"    # 実際のテーブル名に変更してください
-  location: "asia-northeast1"  # データセットのロケーション
   limit: 100
 
 # FAISS インデックス等のパス
