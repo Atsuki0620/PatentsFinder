@@ -69,6 +69,7 @@ class PatentSearchUtils:
         assignee_filters = [f"LOWER(assignee.name) LIKE LOWER('%{name}%')" for name in params.get('assignees', [])]
         assignee_clause = ' OR '.join(assignee_filters) if assignee_filters else 'TRUE'
 
+        public_proj = self.config['bigquery']['public_project_id']
         table_ref = f"`{self.config['bigquery']['project_id']}.{self.dataset}.{self.table}`"
         sql = f"""
 SELECT
