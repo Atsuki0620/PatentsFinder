@@ -2,7 +2,6 @@ defaults:
   llm_model: "gpt-4-turbo-preview"
   embedding_model: "text-embedding-3-small"
   publication_from: "2015-01-01"
-  max_results: 5
   batch_size: 20
 
 bigquery:
@@ -14,7 +13,6 @@ bigquery:
 paths:
   faiss_index: "data/index/patents.faiss"
   faiss_mapping: "data/index/mapping.json"
-  raw_data: "data/raw/patents.csv"
 
 prompts:
   system_search: |
@@ -25,8 +23,6 @@ prompts:
       "assignees": ["検索対象の出願人名（複数可）"],
       "publication_from": "検索対象の公開日（YYYY-MM-DD形式）"
     }
-    
-    ※条件が特定できない場合は空の配列または省略可能です。
 
   system_summary: |
     あなたは特許調査の専門家です。
