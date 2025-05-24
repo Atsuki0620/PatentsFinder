@@ -15,6 +15,7 @@ class PatentSearchUtils:
         credentials: service_account.Credentials,
         openai_api_key: str
     ):
+        # 設定の読み込み
         self.config = config
 
         # OpenAI 新クライアントの初期化
@@ -24,16 +25,18 @@ class PatentSearchUtils:
         self.publication_from = config['defaults']['publication_from']
         self.batch_size = config['defaults']['batch_size']
 
-        # BigQuery クライアント
+        # BigQuery クライアント: location 指定を追加
+        bq_conf = config['bigquery']
         self.bq_client = bigquery.Client(
             credentials=credentials,
-            project=config['bigquery']['project_id']
+            project=bq_conf['project_id'],
+            location=bq_conf.get('location', None)
         )
-        self.dataset = config['bigquery']['dataset']
-        self.table = config['bigquery']['table']
-        self.limit = config['bigquery']['limit']
+        self.dataset = bq_conf['dataset']
+        self.table = bq_conf['table']
+        self.limit = bq_conf['limit']
 
-        # FAISS パス
+        # FAISS ファイルパス
         self.faiss_index_path = config['paths']['faiss_index']
         self.faiss_mapping_path = config['paths']['faiss_mapping']
 
@@ -50,8 +53,7 @@ class PatentSearchUtils:
             ],
             temperature=0
         )
-        content = resp.choices[0].message.content.strip()
-        return json.loads(content)
+        return json.loads(resp.choices[0].message.content.strip())
 
     def build_query(self, params: Dict[str, Any]) -> str:
         clauses = []
@@ -85,25 +87,22 @@ class PatentSearchUtils:
             )
             embeddings.extend([d['embedding'] for d in resp.data])
         arr = np.array(embeddings, dtype='float32')
-        dim = arr.shape[1]
-        index = faiss.IndexFlatL2(dim)
+        index = faiss.IndexFlatL2(arr.shape[1])
         index.add(arr)
         faiss.write_index(index, self.faiss_index_path)
 
-        mapping = df.to_dict(orient='records')
         with open(self.faiss_mapping_path, 'w', encoding='utf-8') as f:
-            json.dump(mapping, f, ensure_ascii=False, indent=2)
+            json.dump(df.to_dict(orient='records'), f, ensure_ascii=False, indent=2)
 
     def search_similar_patents(self, query: str, k: int) -> List[Dict[str, Any]]:
         index = faiss.read_index(self.faiss_index_path)
-        with open(self.faiss_mapping_path, 'r', encoding='utf-8') as f:
-            mapping = json.load(f)
+        mapping = json.load(open(self.faiss_mapping_path, 'r', encoding='utf-8'))
         resp = self.openai_client.embeddings.create(
             model=self.embedding_model,
             input=[query]
         )
         q_emb = np.array(resp.data[0]['embedding'], dtype='float32')
-        D, I = index.search(np.array([q_emb]), k)
+        _, I = index.search(np.array([q_emb]), k)
         df = pd.DataFrame(mapping)
         return [df.iloc[idx].to_dict() for idx in I[0]]
 
