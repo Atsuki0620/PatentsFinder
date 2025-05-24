@@ -1,4 +1,5 @@
 import json
+import logging
 from openai import OpenAI
 import numpy as np
 import pandas as pd
@@ -6,6 +7,8 @@ from google.cloud import bigquery
 from google.oauth2 import service_account
 import faiss
 from typing import List, Dict, Any
+
+logger = logging.getLogger(__name__)
 
 class PatentSearchUtils:
     def __init__(
@@ -15,14 +18,12 @@ class PatentSearchUtils:
         openai_api_key: str
     ):
         self.config = config
-        # OpenAI 新クライアントの初期化
         self.openai_client = OpenAI(api_key=openai_api_key)
         self.llm_model = config['defaults']['llm_model']
         self.embedding_model = config['defaults']['embedding_model']
         self.publication_from = config['defaults']['publication_from']
         self.batch_size = config['defaults']['batch_size']
 
-        # BigQuery クライアント設定
         bq_conf = config['bigquery']
         self.bq_client = bigquery.Client(
             credentials=credentials,
@@ -33,11 +34,9 @@ class PatentSearchUtils:
         self.table = bq_conf['table']
         self.limit = bq_conf['limit']
 
-        # FAISS 関連パス
         self.faiss_index_path = config['paths']['faiss_index']
         self.faiss_mapping_path = config['paths']['faiss_mapping']
 
-        # プロンプト
         self.system_search_prompt = config['prompts']['system_search']
         self.system_summary_prompt = config['prompts']['system_summary']
 
@@ -50,7 +49,12 @@ class PatentSearchUtils:
             ],
             temperature=0
         )
-        params = json.loads(resp.choices[0].message.content.strip())
+        content = resp.choices[0].message.content.strip()
+        try:
+            params = json.loads(content)
+        except json.JSONDecodeError:
+            logger.error(f"JSON parse error: {content}")
+            raise ValueError(f"生成されたレスポンスが JSON 形式ではありません: {content}")
         # 辞書形式ならリスト化
         if isinstance(params.get('ipc_codes'), dict):
             params['ipc_codes'] = list(params['ipc_codes'].values())
@@ -67,24 +71,24 @@ class PatentSearchUtils:
 
         table_ref = f"`{self.config['bigquery']['project_id']}.{self.dataset}.{self.table}`"
         sql = f"""
-        SELECT
-          p.publication_number,
-          (SELECT v.text FROM UNNEST(p.title_localized)    AS v WHERE v.language='en' LIMIT 1) AS title,
-          (SELECT v.text FROM UNNEST(p.abstract_localized) AS v WHERE v.language='en' LIMIT 1) AS abstract,
-          p.publication_date,
-          STRING_AGG(DISTINCT ipc.code, ',')     AS ipc_codes,
-          STRING_AGG(DISTINCT assignee.name, ',') AS assignees
-        FROM {table_ref} AS p,
-             UNNEST(p.ipc)                 AS ipc,
-             UNNEST(p.assignee_harmonized) AS assignee
-        WHERE
-          p.publication_date >= {pub_from}
-          AND ({ipc_clause})
-          AND ({assignee_clause})
-        GROUP BY
-          p.publication_number, title, abstract, p.publication_date
-        LIMIT {self.limit}
-        """
+SELECT
+  p.publication_number,
+  (SELECT v.text FROM UNNEST(p.title_localized)    AS v WHERE v.language='en' LIMIT 1) AS title,
+  (SELECT v.text FROM UNNEST(p.abstract_localized) AS v WHERE v.language='en' LIMIT 1) AS abstract,
+  p.publication_date,
+  STRING_AGG(DISTINCT ipc.code, ',')     AS ipc_codes,
+  STRING_AGG(DISTINCT assignee.name, ',') AS assignees
+FROM {table_ref} AS p,
+     UNNEST(p.ipc)                 AS ipc,
+     UNNEST(p.assignee_harmonized) AS assignee
+WHERE
+  p.publication_date >= {pub_from}
+  AND ({ipc_clause})
+  AND ({assignee_clause})
+GROUP BY
+  p.publication_number, title, abstract, p.publication_date
+LIMIT {self.limit}
+"""
         return sql.strip()
 
     def search_patents(self, query: str) -> pd.DataFrame:
