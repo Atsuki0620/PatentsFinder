@@ -1,4 +1,3 @@
-import os
 import json
 import yaml
 import openai
@@ -10,195 +9,135 @@ import faiss
 from typing import List, Dict, Any
 
 class PatentSearchUtils:
-    def __init__(self, config_path: str):
-        """設定の初期化"""
-        with open(config_path, 'r', encoding='utf-8') as f:
-            self.config = yaml.safe_load(f)
-        
-        # OpenAIクライアントの初期化
-        self.openai_client = openai.OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
-          # BigQuery認証設定
-        credentials_path = os.getenv('GOOGLE_CREDENTIALS_PATH')
-        if not credentials_path:
-            # 環境変数が設定されていない場合はデフォルトパスを使用
-            credentials_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 
-                                          'corded-guild-459506-i6-c7f0bf09e555.json')
-        
-        self.credentials = service_account.Credentials.from_service_account_file(credentials_path)
-        
-        # BigQueryクライアント
+    def __init__(
+        self,
+        config: Dict[str, Any],
+        credentials: service_account.Credentials,
+        openai_api_key: str
+    ):
+        # 設定の読み込み
+        self.config = config
+
+        # OpenAI 初期化
+        openai.api_key = openai_api_key
+        self.openai_client = openai
+        self.llm_model = config['defaults']['llm_model']
+        self.embedding_model = config['defaults']['embedding_model']
+        self.publication_from = config['defaults']['publication_from']
+        self.batch_size = config['defaults']['batch_size']
+
+        # BigQuery クライアント
         self.bq_client = bigquery.Client(
-            credentials=self.credentials,
-            project=self.credentials.project_id,  # 実行プロジェクトID
-            location='US'  # patents-public-dataはUSリージョンにあります
+            credentials=credentials,
+            project=config['bigquery']['project_id']
         )
+        self.dataset = config['bigquery']['dataset']
+        self.table = config['bigquery']['table']
+        self.limit = config['bigquery']['limit']
+
+        # FAISS パス
+        self.faiss_index_path = config['paths']['faiss_index']
+        self.faiss_mapping_path = config['paths']['faiss_mapping']
+
+        # プロンプト
+        self.system_search_prompt = config['prompts']['system_search']
+        self.system_summary_prompt = config['prompts']['system_summary']
 
     def generate_search_params(self, user_input: str) -> Dict[str, Any]:
-        """ユーザー入力から検索パラメータを生成"""
-        response = self.openai_client.chat.completions.create(
-            model=self.config['defaults']['llm_model'],
+        """
+        自然文から検索パラメータ（JSON）を生成
+        """
+        response = self.openai_client.ChatCompletion.create(
+            model=self.llm_model,
             messages=[
-                {'role': 'system', 'content': self.config['prompts']['system_search']},
+                {'role': 'system', 'content': self.system_search_prompt},
                 {'role': 'user', 'content': user_input}
             ],
             temperature=0
         )
-        
-        try:
-            params = json.loads(response.choices[0].message.content.strip())
-        except (json.JSONDecodeError, AttributeError):
-            params = {}
-        
-        # パラメータの検証と設定
-        if not params.get('publication_from'):
-            params['publication_from'] = self.config['defaults']['publication_from']
-            params['publication_from'] = self.config['defaults']['publication_from']
-        
-        return params
+        content = response.choices[0].message.content.strip()
+        return json.loads(content)
 
     def build_query(self, params: Dict[str, Any]) -> str:
-        """検索パラメータからSQLクエリを構築"""
-        # フィルター文字列の生成
-        ipc_filter = " OR ".join([f"ipc.code LIKE '{ipc}%'"
-                                for ipc in params.get('ipc_codes', [])])
-        if not ipc_filter:
-            ipc_filter = "1=1"
-            
-        assignee_filter = " OR ".join([f"LOWER(assignee.name) LIKE '%{a.lower()}%'"
-                                     for a in params.get('assignees', [])])
-        if not assignee_filter:
-            assignee_filter = "1=1"
-          # 公開日のフィルター処理
-        try:
-            pub_date = str(params.get('publication_from', ''))
-            if not pub_date or not pub_date.strip():
-                pub_date = self.config['defaults']['publication_from']
-            pub_date_thr = int(pub_date.replace("-", ""))
-        except (ValueError, AttributeError):
-            pub_date_thr = int(self.config['defaults']['publication_from'].replace("-", ""))
-        return f"""
-        SELECT
-          p.publication_number,
-          (SELECT v.text FROM UNNEST(p.title_localized) AS v
-           WHERE v.language='en' LIMIT 1) AS title,
-          (SELECT v.text FROM UNNEST(p.abstract_localized) AS v
-           WHERE v.language='en' LIMIT 1) AS abstract,
-          p.publication_date,
-          p.filing_date,
-          STRING_AGG(DISTINCT ipc.code, ',') AS ipc_codes,
-          STRING_AGG(DISTINCT assignee.name, ',') AS assignees
-        FROM `patents-public-data.patents.publications` AS p,
-             UNNEST(p.ipc) AS ipc,
-             UNNEST(p.assignee_harmonized) AS assignee
-        WHERE p.publication_date >= {pub_date_thr}
-          AND ({ipc_filter})
-          AND ({assignee_filter})
-        GROUP BY
-          p.publication_number,
-          title,
-          abstract,
-          p.publication_date,
-          p.filing_date
-        LIMIT {self.config['bigquery']['limit']};
         """
+        BigQuery 用の SQL を組み立て
+        """
+        clauses = []
+        # IPC コード
+        if params.get('ipc_codes'):
+            codes = ", ".join([f"'{c}'" for c in params['ipc_codes']])
+            clauses.append(f"ipc_code IN ({codes})")
+        # 出願人
+        if params.get('assignees'):
+            names = " OR ".join([
+                f"LOWER(applicant) LIKE LOWER('%{name}%')" for name in params['assignees']
+            ])
+            clauses.append(f"({names})")
+        # 公開日
+        pub_from = params.get('publication_from', self.publication_from)
+        clauses.append(f"publication_date >= '{pub_from}'")
+
+        where = " AND ".join(clauses)
+        table_ref = f"`{self.config['bigquery']['project_id']}.{self.dataset}.{self.table}`"
+        return f"SELECT * FROM {table_ref} WHERE {where} LIMIT {self.limit}"
 
     def search_patents(self, query: str) -> pd.DataFrame:
-        """BigQueryで特許を検索"""
-        return self.bq_client.query(query).to_dataframe()
+        """
+        BigQuery で特許データを取得
+        """
+        job = self.bq_client.query(query)
+        return job.to_dataframe()
 
-    def get_embeddings(self, texts: List[str]) -> np.ndarray:
-        """テキストの埋め込みベクトルを取得"""
-        embeds = []
-        batch_size = self.config['defaults']['batch_size']
-        
-        for i in range(0, len(texts), batch_size):
-            batch = texts[i:i + batch_size]
-            response = self.openai_client.embeddings.create(
-                input=batch,
-                model=self.config['defaults']['embedding_model']
+    def build_faiss_index(self, df: pd.DataFrame):
+        """
+        抽出結果から埋め込みを作成し、FAISS インデックスを保存
+        """
+        abstracts = df['abstract'].fillna('').tolist()
+        embeddings = []
+        for i in range(0, len(abstracts), self.batch_size):
+            batch = abstracts[i:i + self.batch_size]
+            resp = self.openai_client.Embeddings.create(
+                model=self.embedding_model,
+                input=batch
             )
-            embeds.extend([d.embedding for d in response.data])
-        
-        return np.array(embeds, dtype='float32')
-
-    def build_faiss_index(self, df: pd.DataFrame) -> None:
-        """FAISSインデックスを構築して保存"""
-        # テキスト準備
-        documents = (df['title'].fillna('') + "\n\n" + df['abstract'].fillna('')).tolist()
-        
-        # 埋め込み取得
-        embeddings = self.get_embeddings(documents)
-        
-        # インデックス構築
-        dim = embeddings.shape[1]
+            embeddings.extend([d['embedding'] for d in resp['data']])
+        arr = np.array(embeddings, dtype='float32')
+        dim = arr.shape[1]
         index = faiss.IndexFlatL2(dim)
-        index.add(embeddings)
-        
-        # 検索結果をCSVとして保存
-        df.to_csv(self.config['paths']['raw_data'], index=False, encoding='utf-8-sig')
-        
-        # 保存
-        os.makedirs(os.path.dirname(self.config['paths']['faiss_index']), exist_ok=True)
-        faiss.write_index(index, self.config['paths']['faiss_index'])
-        
-        # ID対応付けの保存
-        with open(self.config['paths']['faiss_mapping'], 'w', encoding='utf-8') as f:
-            json.dump(df['publication_number'].tolist(), f)
+        index.add(arr)
+        faiss.write_index(index, self.faiss_index_path)
 
-    def search_similar_patents(self, query_text: str, k: int = None) -> List[Dict[str, Any]]:
-        """類似特許を検索"""
-        if k is None:
-            k = self.config['defaults']['max_results']
-            
-        # クエリの埋め込み
-        query_embedding = self.get_embeddings([query_text])[0]
-        
-        # インデックスとIDのロード
-        index = faiss.read_index(self.config['paths']['faiss_index'])
-        with open(self.config['paths']['faiss_mapping'], 'rb') as f:
-            ids = json.load(f)
-            
-        # 類似度検索
-        distances, indices = index.search(
-            query_embedding.reshape(1, -1),
-            k
+        # ID ↔ レコードマッピング
+        mapping = df.to_dict(orient='records')
+        with open(self.faiss_mapping_path, 'w', encoding='utf-8') as f:
+            json.dump(mapping, f, ensure_ascii=False, indent=2)
+
+    def search_similar_patents(self, query: str, k: int) -> List[Dict[str, Any]]:
+        """
+        FAISS インデックスを用いて類似特許を検索
+        """
+        index = faiss.read_index(self.faiss_index_path)
+        with open(self.faiss_mapping_path, 'r', encoding='utf-8') as f:
+            mapping = json.load(f)
+        resp = self.openai_client.Embeddings.create(
+            model=self.embedding_model,
+            input=[query]
         )
-        
-        # メタデータの読み込み
-        df = pd.read_csv(self.config['paths']['raw_data'])
-        
-        # 結果の整形
-        results = []
-        for idx in indices[0]:
-            pub = ids[idx]
-            title = df.loc[df.publication_number == pub, 'title'].values[0]
-            abstract = df.loc[df.publication_number == pub, 'abstract'].values[0]
-            assignees = df.loc[df.publication_number == pub, 'assignees'].values[0]
-            filing_date = df.loc[df.publication_number == pub, 'filing_date'].values[0] if 'filing_date' in df.columns else ''
-            results.append({
-                'publication_number': pub,
-                'title': title,
-                'abstract': abstract,
-                'applicant': assignees,
-                'filing_date': filing_date
-            })
-            
-        return results
+        q_emb = np.array(resp['data'][0]['embedding'], dtype='float32')
+        D, I = index.search(np.array([q_emb]), k)
+        df = pd.DataFrame(mapping)
+        return [df.iloc[idx].to_dict() for idx in I[0]]
 
     def generate_summary(self, text: str) -> str:
-        """特許の内容を要約"""
-        prompt = (
-            "以下の特許の要約を、特許調査の専門家として日本語で2行以内で要約してください。\n\n"
-            f"{text}"
-        )
-        
-        response = self.openai_client.chat.completions.create(
-            model=self.config['defaults']['llm_model'],
+        """
+        与えられたテキストを要約
+        """
+        response = self.openai_client.ChatCompletion.create(
+            model=self.llm_model,
             messages=[
-                {'role': 'system', 'content': self.config['prompts']['system_summary']},
-                {'role': 'user', 'content': prompt}
+                {'role': 'system', 'content': self.system_summary_prompt},
+                {'role': 'user', 'content': text}
             ],
             temperature=0
         )
-        
         return response.choices[0].message.content.strip()
