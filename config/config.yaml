@@ -5,13 +5,14 @@ defaults:
   publication_from: "2015-01-01"
   batch_size: 20
 
-# BigQuery 設定: 公開データセットを使用
+# BigQuery 設定: 実行プロジェクトと参照する公開データセットを分離
 bigquery:
-  project_id: "patents-public-data"
-  dataset:    "patents"
-  table:      "publications"
-  location:   "US"
-  limit:      100
+  project_id: "corded-guild-459506-i6"      # ジョブ実行と請求に使う自分のプロジェクトID
+  public_project_id: "patents-public-data"  # クエリ対象となる公開データセットのプロジェクトID
+  dataset:          "patents"               # 公開データセット名
+  table:            "publications"          # テーブル名
+  location:         "US"                    # データセットのロケーション
+  limit:            100
 
 # FAISS インデックス等のパス
 paths:
