@@ -8,37 +8,6 @@ from src.utils.patent_utils import PatentSearchUtils
 # 環境変数の読み込み
 load_dotenv()
 
-
-# ▼ ① 環境変数から取り出す（GitHub Actions / Streamlit Cloud では Secrets に設定しておく）
-sa_json_str = os.getenv("GCP_SERVICE_ACCOUNT_JSON", "{}")   # 例: {"type": "...", ...}
-private_key = os.getenv("PRIVATE_KEY", "")                  # 例: -----BEGIN PRIVATE KEY-----\nMIIEv...
-
-# \n付き1行を JSON にセットする
-import os, json
-sa_info = json.loads(os.getenv("corded-guild-459506-i6-67e3661c726b.json"))
-sa_info["private_key"] = os.getenv("PRIVATE_KEY")  # \n入り1行
-
-# ▼ ② JSON にパースして private_key を上書き
-try:
-    sa_info = json.loads(sa_json_str)
-    sa_info["private_key"] = private_key
-
-    st.success("サービスアカウント情報を読み込みました")
-    st.json(sa_info)          # 展開して中身を確認
-except json.JSONDecodeError as e:
-    st.error(f"JSON のパースに失敗しました: {e}")
-    st.code(sa_json_str)      # 失敗時は元文字列を表示
-
-
-
-
-
-
-
-
-
-
-
 # 設定ファイルの読み込み
 @st.cache_resource
 def load_config():
