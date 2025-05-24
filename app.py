@@ -4,8 +4,6 @@ import yaml
 import pandas as pd
 import streamlit as st
 from google.oauth2 import service_account
-
-# src をパッケージとしてインポート（プロジェクトルートが sys.path に含まれている）
 from src.utils.patent_utils import PatentSearchUtils
 
 # ─── Secrets 取得 ────────────────────────────────────────────
@@ -46,7 +44,6 @@ def main():
         similar_search()
 
 
-
 def keyword_search():
     utils = get_utils()
     user_input = st.text_area("検索条件（自然文）を入力してください", height=120)
@@ -68,12 +65,10 @@ def keyword_search():
                 csv_data = df.to_csv(index=False).encode('utf-8-sig')
                 st.download_button("CSV ダウンロード", csv_data, "results.csv", "text/csv")
 
-                # FAISS インデックス構築
                 utils.build_faiss_index(df)
                 st.success("📦 FAISS インデックスを構築しました")
             except Exception as e:
                 st.error(f"エラーが発生しました: {e}")
-
 
 
 def similar_search():
@@ -89,16 +84,4 @@ def similar_search():
             try:
                 results = utils.search_similar_patents(query, k)
                 for i, patent in enumerate(results, start=1):
-                    with st.expander(f"{i}. {patent.get('title', 'No Title')}", expanded=False):
-                        st.write(f"- 公開番号: {patent.get('publication_number', '')}")
-                        st.write(f"- 出願人: {patent.get('applicant', '')}")
-                        st.write(f"- 抄録: {patent.get('abstract', '')}")
-                        if show_summary:
-                            summary = utils.generate_summary(patent.get('abstract', ''))
-                            st.write(f"🔍 要約: {summary}")
-            except Exception as e:
-                st.error(f"エラーが発生しました: {e}")
-
-
-if __name__ == "__main__":
-    main()
+                    with st.expander(f"{i}. {patent.get('title', 'No Title')}"
