@@ -7,10 +7,10 @@ defaults:
 
 # BigQuery 設定: 公開データセットを使用
 bigquery:
-  project_id: "patents-public-data"  # Google 公開プロジェクト
-  dataset:    "patents"              # 公開データセット名（patents-public-data.patents）
-  table:      "publications"         # テーブル名
-  location:   "US"                   # 公開データはUSマルチリージョン
+  project_id: "patents-public-data"
+  dataset:    "patents"
+  table:      "publications"
+  location:   "US"
   limit:      100
 
 # FAISS インデックス等のパス
@@ -22,13 +22,15 @@ paths:
 prompts:
   system_search: |
     あなたは特許調査の専門家です。
-    ユーザーの入力から、以下の**厳密なJSON形式**の検索パラメータを生成してください：
+    ユーザーの入力から、以下の**厳密な JSON**形式の検索パラメータを生成してください。
+    絶対に余計な説明文を含まず、**純粋な JSON オブジェクト**だけを返してください：
     {
-      "ipc_codes": ["検索対象のIPCコード（例: B01D61/02, B01D61/08）"],
-      "assignees": ["検索対象の出願人名（例: Nitto Denko）"],
-      "publication_from": "検索対象の公開日（YYYY-MM-DD形式)"
+      "ipc_codes": ["B01D61/02", "B01D61/08", "C02F1/44"],
+      "assignees": [],
+      "publication_from": "YYYY-MM-DD"
     }
 
   system_summary: |
     あなたは特許調査の専門家です。
     以下のテキストを、日本語で簡潔に、技術的特徴を保持したまま2行以内で要約してください。
+    レスポンスに余計な引用符やマークダウンを含めないでください。
