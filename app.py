@@ -84,4 +84,15 @@ def similar_search():
             try:
                 results = utils.search_similar_patents(query, k)
                 for i, patent in enumerate(results, start=1):
-                    with st.expander(f"{i}. {patent.get('title', 'No Title')}"
+                    with st.expander(f"{i}. {patent.get('title', 'No Title')}"):
+                        st.write(f"- 公開番号: {patent.get('publication_number', '')}")
+                        st.write(f"- 出願人: {patent.get('assignees', '')}")
+                        st.write(f"- 抄録: {patent.get('abstract', '')}")
+                        if show_summary:
+                            summary = utils.generate_summary(patent.get('abstract', ''))
+                            st.write(f"🔍 要約: {summary}")
+            except Exception as e:
+                st.error(f"エラーが発生しました: {e}")
+
+if __name__ == "__main__":
+    main()
