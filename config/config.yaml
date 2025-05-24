@@ -16,7 +16,7 @@ bigquery:
 # FAISS インデックス等のパス
 paths:
   faiss_index:  "data/index/patents.faiss"
-  faiss_mapping:"data/index/mapping.json"
+  faiss_mapping: "data/index/mapping.json"
 
 # LLM および埋め込み用プロンプト
 prompts:
@@ -26,7 +26,7 @@ prompts:
     {
       "ipc_codes": ["検索対象のIPCコード（例: B01D61/02, B01D61/08）"],
       "assignees": ["検索対象の出願人名（例: Nitto Denko）"],
-      "publication_from": "検索対象の公開日（YYYY-MM-DD形式）"
+      "publication_from": "検索対象の公開日（YYYY-MM-DD形式)"
     }
 
   system_summary: |
