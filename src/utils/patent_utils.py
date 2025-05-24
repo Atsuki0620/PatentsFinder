@@ -1,6 +1,8 @@
+# File: src/utils/patent_utils.py
+
 import json
 import yaml
-import openai
+from openai import OpenAI
 import numpy as np
 import pandas as pd
 from google.cloud import bigquery
@@ -18,9 +20,8 @@ class PatentSearchUtils:
         # 設定の読み込み
         self.config = config
 
-        # OpenAI 初期化
-        openai.api_key = openai_api_key
-        self.openai_client = openai
+        # OpenAI 新クライアントの初期化
+        self.openai_client = OpenAI(api_key=openai_api_key)
         self.llm_model = config['defaults']['llm_model']
         self.embedding_model = config['defaults']['embedding_model']
         self.publication_from = config['defaults']['publication_from']
@@ -47,15 +48,15 @@ class PatentSearchUtils:
         """
         自然文から検索パラメータ（JSON）を生成
         """
-        response = self.openai_client.ChatCompletion.create(
+        resp = self.openai_client.chat.completions.create(
             model=self.llm_model,
             messages=[
                 {'role': 'system', 'content': self.system_search_prompt},
-                {'role': 'user', 'content': user_input}
+                {'role': 'user',   'content': user_input}
             ],
             temperature=0
         )
-        content = response.choices[0].message.content.strip()
+        content = resp.choices[0].message.content.strip()
         return json.loads(content)
 
     def build_query(self, params: Dict[str, Any]) -> str:
@@ -96,11 +97,11 @@ class PatentSearchUtils:
         embeddings = []
         for i in range(0, len(abstracts), self.batch_size):
             batch = abstracts[i:i + self.batch_size]
-            resp = self.openai_client.Embeddings.create(
+            resp = self.openai_client.embeddings.create(
                 model=self.embedding_model,
                 input=batch
             )
-            embeddings.extend([d['embedding'] for d in resp['data']])
+            embeddings.extend([d['embedding'] for d in resp.data])
         arr = np.array(embeddings, dtype='float32')
         dim = arr.shape[1]
         index = faiss.IndexFlatL2(dim)
@@ -119,11 +120,11 @@ class PatentSearchUtils:
         index = faiss.read_index(self.faiss_index_path)
         with open(self.faiss_mapping_path, 'r', encoding='utf-8') as f:
             mapping = json.load(f)
-        resp = self.openai_client.Embeddings.create(
+        resp = self.openai_client.embeddings.create(
             model=self.embedding_model,
             input=[query]
         )
-        q_emb = np.array(resp['data'][0]['embedding'], dtype='float32')
+        q_emb = np.array(resp.data[0]['embedding'], dtype='float32')
         D, I = index.search(np.array([q_emb]), k)
         df = pd.DataFrame(mapping)
         return [df.iloc[idx].to_dict() for idx in I[0]]
@@ -132,12 +133,12 @@ class PatentSearchUtils:
         """
         与えられたテキストを要約
         """
-        response = self.openai_client.ChatCompletion.create(
+        resp = self.openai_client.chat.completions.create(
             model=self.llm_model,
             messages=[
                 {'role': 'system', 'content': self.system_summary_prompt},
-                {'role': 'user', 'content': text}
+                {'role': 'user',   'content': text}
             ],
             temperature=0
         )
-        return response.choices[0].message.content.strip()
+        return resp.choices[0].message.content.strip()
