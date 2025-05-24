@@ -1,33 +1,37 @@
+import os, json
 import streamlit as st
-import json
 from google.oauth2 import service_account
 
-st.title("🔐 GCP Service Account Secret テスト")
+st.title("🔐 GCP Secret 読み込みテスト")
 
-# 1. st.secrets から JSON 文字列を取得
+# ① st.secrets から
 sa_json = st.secrets.get("GCP_SERVICE_ACCOUNT")
+
+# ② 環境変数から（GitHub Actions 経由など）
 if not sa_json:
-    st.error("❌ st.secrets['GCP_SERVICE_ACCOUNT'] が設定されていません。")
+    sa_json = os.environ.get("GCP_SERVICE_ACCOUNT")
+
+if not sa_json:
+    st.error("❌ Secret が見つかりません (st.secrets or ENV)。")
     st.stop()
 
-# 2. JSON としてパース
+# JSON パース
 try:
     info = json.loads(sa_json)
-except json.JSONDecodeError as e:
-    st.error(f"❌ JSON のパースに失敗しました: {e}")
+except Exception as e:
+    st.error(f"❌ JSON パース失敗: {e}")
     st.stop()
 
-# 3. 必須キーのチェック
-required_keys = ["type", "project_id", "private_key", "client_email", "token_uri"]
-missing = [k for k in required_keys if k not in info]
-if missing:
-    st.error(f"❌ 以下のキーが足りません: {missing}")
-    st.stop()
+# 必須キーチェック
+for k in ("type","project_id","private_key","client_email","token_uri"):
+    if k not in info:
+        st.error(f"❌ キー不足: {k}")
+        st.stop()
 
-# 4. Credentials を生成してみる
+# Credentials 生成テスト
 try:
     creds = service_account.Credentials.from_service_account_info(info)
-    st.success("✅ Credentials の生成に成功しました！")
+    st.success("✅ Credentials 生成 OK")
     st.write("プロジェクトID:", creds.project_id)
 except Exception as e:
-    st.error(f"❌ Credentials の生成でエラー: {e}")
+    st.error(f"❌ Credentials 生成失敗: {e}")
