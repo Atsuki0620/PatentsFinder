@@ -18,13 +18,11 @@ if not openai_key:
     st.error("OpenAI API Key が設定されていません。OPENAI_API_KEY を設定してください。")
     st.stop()
 
-# ─── 設定読み込み ────────────────────────────────────────────
 @st.cache_resource
 def load_config() -> dict:
     with open("config/config.yaml", "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
-# ─── Utils インスタンス化 ────────────────────────────────────
 @st.cache_resource
 def get_utils() -> PatentSearchUtils:
     cfg = load_config()
@@ -34,7 +32,6 @@ def get_utils() -> PatentSearchUtils:
         openai_api_key=openai_key
     )
 
-
 def main():
     st.title("🔍 特許調査支援システム")
     mode = st.sidebar.radio("検索モード", ["キーワード検索", "類似特許検索"], index=0)
@@ -43,33 +40,27 @@ def main():
     else:
         similar_search()
 
-
 def keyword_search():
     utils = get_utils()
     user_input = st.text_area("検索条件（自然文）を入力してください", height=120)
     if not user_input:
         return
-
     if st.button("検索実行"):
         with st.spinner("検索中…"):
             try:
                 params = utils.generate_search_params(user_input)
                 st.subheader("📝 生成された検索パラメータ")
                 st.json(params)
-
                 query = utils.build_query(params)
                 df = utils.search_patents(query)
                 st.subheader(f"🔎 検索結果: {len(df)} 件")
                 st.dataframe(df)
-
                 csv_data = df.to_csv(index=False).encode('utf-8-sig')
                 st.download_button("CSV ダウンロード", csv_data, "results.csv", "text/csv")
-
                 utils.build_faiss_index(df)
                 st.success("📦 FAISS インデックスを構築しました")
             except Exception as e:
                 st.error(f"エラーが発生しました: {e}")
-
 
 def similar_search():
     utils = get_utils()
@@ -78,13 +69,12 @@ def similar_search():
         return
     k = st.slider("類似件数", 1, 10, 5)
     show_summary = st.checkbox("要約を表示", True)
-
     if st.button("類似特許検索実行"):
         with st.spinner("類似特許検索中…"):
             try:
                 results = utils.search_similar_patents(query, k)
                 for i, patent in enumerate(results, start=1):
-                    with st.expander(f"{i}. {patent.get('title', 'No Title')}"):
+                    with st.expander(f"{i}. {patent.get('title', 'No Title')}" ):
                         st.write(f"- 公開番号: {patent.get('publication_number', '')}")
                         st.write(f"- 出願人: {patent.get('assignees', '')}")
                         st.write(f"- 抄録: {patent.get('abstract', '')}")
