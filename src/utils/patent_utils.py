@@ -97,20 +97,33 @@ LIMIT {self.limit}
         return job.to_dataframe()
 
     def build_faiss_index(self, df: pd.DataFrame):
-        abstracts = df['abstract'].fillna('').tolist()
+        # 1) NaN を空文字にし、必ず文字列型に変換
+        abstracts = df['abstract'].fillna('').astype(str).tolist()
+        # 2) 空文字や空白のみの要素は除外
+        texts = [t for t in abstracts if t.strip()]
+    
         embeddings = []
-        for i in range(0, len(abstracts), self.batch_size):
+        # 3) バッチごとに OpenAI 埋め込み API を呼び出し
+        for i in range(0, len(texts), self.batch_size):
+            batch = texts[i:i + self.batch_size]
+            if not batch:
+                continue
             resp = self.openai_client.embeddings.create(
                 model=self.embedding_model,
-                input=abstracts[i:i+self.batch_size]
+                input=batch
             )
             embeddings.extend([d['embedding'] for d in resp.data])
+    
+        # 4) NumPy 配列に変換して FAISS インデックスを構築
         arr = np.array(embeddings, dtype='float32')
         index = faiss.IndexFlatL2(arr.shape[1])
         index.add(arr)
+    
+        # 5) インデックスとマッピングをファイルに出力
         faiss.write_index(index, self.faiss_index_path)
         with open(self.faiss_mapping_path, 'w', encoding='utf-8') as f:
             json.dump(df.to_dict(orient='records'), f, ensure_ascii=False, indent=2)
+
 
     def search_similar_patents(self, query: str, k: int) -> List[Dict[str, Any]]:
         index = faiss.read_index(self.faiss_index_path)
