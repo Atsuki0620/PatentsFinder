@@ -7,6 +7,7 @@ from google.cloud import bigquery
 from google.oauth2 import service_account
 import faiss
 from typing import List, Dict, Any
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +138,8 @@ LIMIT {self.limit}
         df = pd.DataFrame(mapping)
         return [df.iloc[idx].to_dict() for idx in I[0]]
 
-    def generate_summary(self, text: str) -> str:
+    def generate_summary(self, text: Optional[str]) -> str:
+    text = text or "" # None が渡されたら空文字に
         resp = self.openai_client.chat.completions.create(
             model=self.llm_model,
             messages=[
