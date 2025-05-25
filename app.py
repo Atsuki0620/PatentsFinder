@@ -79,7 +79,9 @@ def similar_search():
                         st.write(f"- 出願人: {patent.get('assignees', '')}")
                         st.write(f"- 抄録: {patent.get('abstract', '')}")
                         if show_summary:
-                            summary = utils.generate_summary(patent.get('abstract', ''))
+                            # 抄録が None の場合は空文字に
+                            abstract_text = patent.get('abstract') or ''
+                            summary      = utils.generate_summary(abstract_text)
                             st.write(f"🔍 要約: {summary}")
             except Exception as e:
                 st.error(f"エラーが発生しました: {e}")
