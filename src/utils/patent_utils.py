@@ -139,7 +139,7 @@ LIMIT {self.limit}
         return [df.iloc[idx].to_dict() for idx in I[0]]
 
     def generate_summary(self, text: Optional[str]) -> str:
-    text = text or "" # None が渡されたら空文字に
+        text = text or "" # None が渡されたら空文字に
         resp = self.openai_client.chat.completions.create(
             model=self.llm_model,
             messages=[
