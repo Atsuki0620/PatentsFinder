@@ -70,8 +70,7 @@ class PatentSearchUtils:
         assignee_clause = ' OR '.join(assignee_filters) if assignee_filters else 'TRUE'
 
         public_proj = self.config['bigquery']['public_project_id']
-        # 公開データセット側のプロジェクトIDを使う
-        table_ref = f"`{self.config['bigquery']['public_project_id']}.{self.dataset}.{self.table}`"
+        table_ref   = f"`{public_proj}.{self.dataset}.{self.table}`"
         sql = f"""
 SELECT
   p.publication_number,
