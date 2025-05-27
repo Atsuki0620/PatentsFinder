@@ -7,7 +7,7 @@ from google.oauth2 import service_account
 from src.utils.patent_utils import PatentSearchUtils
 
 # LangChain imports
-from langchain.chat_models import ChatOpenAI
+from langchain.chat_models.openai import ChatOpenAI
 from langchain.memory import ConversationBufferMemory
 from langchain import LLMChain, ConversationChain
 from langchain.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate
