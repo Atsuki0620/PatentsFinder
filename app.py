@@ -14,6 +14,12 @@ def load_config():
 cfg = load_config()
 proposal_system_prompt = cfg['chat_flow']['proposal_prompt']
 
+# カジュアルな初期プロンプト
+initial_prompt = cfg['chat_flow'].get(
+    'initial_prompt',
+    "こんにちは！🚀 どんな特許情報をお探しですか？気になる技術や公開日、調査したい国やキーワードなど、思いつくまま教えてください♪"
+)
+
 # --- セッションステート初期化 ---
 if 'mode' not in st.session_state:
     st.session_state.mode = 'question'      # question, proposal, execute
@@ -33,23 +39,29 @@ def get_utils():
         openai_api_key=openai_key
     )
 
+# --- チャットUI用関数 ---
+def render_chat():
+    for msg in st.session_state.chat_history:
+        role = msg['role'] if msg['role'] != 'system' else 'assistant'
+        st.chat_message(role).write(msg['content'])
+
 # --- フェーズごとの UI ---
 def question_phase():
-    st.markdown(
-        "**どんな特許を調べたいですか？技術内容、公開日（YYYY-MM-DD形式）、対象国（例：JP,US,EP）、およびキーワードを指定すると良い検索結果が得られます。回答例：\n"
-              "技術内容：逆浸透膜の洗浄制御、公開日：2015-01-01以降、対象国：JP,US、キーワード：洗浄,メンブレン**"
-    )
-    answer = st.text_area("上記形式でご回答ください", height=120, key="question_input")
-    if st.button("次へ"):  
-        if answer.strip():
-            st.session_state.chat_history.append({'role': 'user', 'content': answer})
-            st.session_state.mode = 'proposal'
-            st.experimental_rerun()
+    # 初期プロンプト表示
+    if not any(m['role']=='system' and m['content']==initial_prompt for m in st.session_state.chat_history):
+        st.session_state.chat_history.append({'role':'system','content': initial_prompt})
+    render_chat()
+    user_input = st.chat_input("自由に入力してください…")
+    if user_input:
+        st.session_state.chat_history.append({'role':'user', 'content': user_input})
+        st.session_state.mode = 'proposal'
+        st.experimental_rerun()
 
 
 def proposal_phase():
+    render_chat()
+    # LLMによる提案生成
     utils = get_utils()
-    # システム＋ユーザーのやり取りを生成
     messages = [
         {'role': 'system', 'content': proposal_system_prompt},
         {'role': 'user', 'content': st.session_state.chat_history[-1]['content']}
@@ -61,39 +73,42 @@ def proposal_phase():
     )
     proposal = resp.choices[0].message.content.strip()
     st.session_state.proposal = proposal
-    st.markdown("**提案された検索パラメータ（JSON形式）**")
+    st.session_state.chat_history.append({'role':'assistant','content': proposal})
+    render_chat()
     st.code(proposal, language='json')
-    col1, col2 = st.columns(2)
-    if col1.button("検索実行"):
+    # 選択肢表示
+    if st.button("🔍 この方針で検索実行"):
         st.session_state.mode = 'execute'
         st.experimental_rerun()
-    if col2.button("修正する"):
+    if st.button("✏️ 方針を修正する"):
         st.session_state.mode = 'question'
         st.session_state.chat_history = []
         st.experimental_rerun()
 
 
 def execute_phase():
+    render_chat()
     utils = get_utils()
     try:
         params = json.loads(st.session_state.proposal)
     except json.JSONDecodeError:
-        st.error("提案内容が正しいJSON形式ではありません。再度修正してください。")
-        if st.button("修正画面へ戻る"):
+        st.chat_message("assistant").write(
+            "あれ？提案された内容がJSONとして読み込めませんでした。もう一度教えてもらえると助かります！"
+        )
+        if st.button("再入力する"):
             st.session_state.mode = 'question'
             st.session_state.chat_history = []
             st.experimental_rerun()
         return
 
-    sql = utils.build_query(params)
-    df = utils.search_patents(sql)
-    st.subheader(f"🔎 検索結果: {len(df)} 件")
+    df = utils.search_patents(utils.build_query(params))
+    st.chat_message("assistant").write(f"結果が出ました！{len(df)} 件の特許を見つけました🙂")
     st.dataframe(df)
     csv_data = df.to_csv(index=False).encode('utf-8-sig')
     st.download_button("CSV ダウンロード", csv_data, "results.csv", "text/csv")
 
 # --- メイン ---
-st.title("🔍 特許調査支援システム（チャットフロー版）")
+st.title("🔍 特許調査支援システム（チャットUI版）")
 if st.session_state.mode == 'question':
     question_phase()
 elif st.session_state.mode == 'proposal':
