@@ -43,27 +43,27 @@ initial_prompt = config["chat_flow"]["initial_prompt"]
 proposal_prompt = config["chat_flow"]["proposal_prompt"]
 
 # ─── セッションステート初期化 ─────────────────────────────────
-if 'mode' not in st.session_state:
+if "mode" not in st.session_state:
     st.session_state.mode = "question"
-if 'chat_history' not in st.session_state:
+if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
-if 'awaiting_confirm' not in st.session_state:
+if "awaiting_confirm" not in st.session_state:
     st.session_state.awaiting_confirm = False
-if 'initial_prompt_shown' not in st.session_state:
+if "initial_prompt_shown" not in st.session_state:
     st.session_state.initial_prompt_shown = False
 
 # ─── チャット描画ヘルパー ────────────────────────────────────
 def render_chat():
     for msg in st.session_state.chat_history:
-        role = "assistant" if msg["role"] in ("assistant","system") else "user"
+        role = "assistant" if msg["role"] in ("assistant", "system") else "user"
         st.chat_message(role).write(msg["content"])
 
 # ─── 質問フェーズ ───────────────────────────────────────────
 def question_phase():
-    # 初回だけ案内を表示
+    # 初回は一度だけ初期プロンプトを表示
     if not st.session_state.initial_prompt_shown:
         st.session_state.chat_history.append({
-            "role": "assistant",  # or "system"
+            "role": "assistant",
             "content": initial_prompt
         })
         st.session_state.initial_prompt_shown = True
@@ -73,7 +73,6 @@ def question_phase():
     if not st.session_state.awaiting_confirm:
         user_input = st.chat_input("自由に入力してください…")
         if user_input:
-            # ユーザー発言を履歴に追加
             st.session_state.chat_history.append({
                 "role": "user",
                 "content": user_input
@@ -94,7 +93,6 @@ def question_phase():
             )
             interpretation = resp.choices[0].message.content.strip()
 
-            # 解釈結果を履歴に追加し、確認状態へ
             st.session_state.chat_history.append({
                 "role": "assistant",
                 "content": interpretation
@@ -103,7 +101,6 @@ def question_phase():
             render_chat()
 
     else:
-        # 確認応答を待つ
         confirm = st.chat_input("この理解でよろしいですか？「はい」または「いいえ」でご回答ください。")
         if confirm:
             st.session_state.chat_history.append({
@@ -115,19 +112,19 @@ def question_phase():
             if confirm.lower() in ["はい", "yes"]:
                 st.session_state.mode = "proposal"
             else:
-                # 誤解のときは履歴を残したまま再入力を促す
+                # 誤解時は履歴を残して再入力を促す
                 st.session_state.chat_history.append({
                     "role": "assistant",
                     "content": "すみません、誤解があったようです。もう一度教えてください！"
                 })
                 render_chat()
-                # mode はそのまま 'question' で次の入力を待機
 
             st.session_state.awaiting_confirm = False
 
 # ─── 提案フェーズ ───────────────────────────────────────────
 def proposal_phase():
     render_chat()
+
     if "proposal" not in st.session_state:
         resp = openai_client.chat.completions.create(
             model=llm_model,
@@ -150,11 +147,11 @@ def proposal_phase():
     if col1.button("検索実行"):
         st.session_state.mode = "execute"
     if col2.button("修正する"):
-        # 履歴とフラグをクリアして最初に戻る
-        st.session_state.mode = "question"
+        # 「修正する」時だけ履歴とフラグをリセット
         st.session_state.chat_history = []
-        st.session_state.proposal = None
         st.session_state.initial_prompt_shown = False
+        st.session_state.proposal = None
+        st.session_state.mode = "question"
 
 # ─── 実行フェーズ ───────────────────────────────────────────
 def execute_phase():
