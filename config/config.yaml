@@ -14,23 +14,14 @@ bigquery:
   location:         "US"                    # データセットのロケーション
   limit:            100
 
-
 chat_flow:
-  questions:
-    - text: "調査したい技術領域（IPCコードの例：B01D、C02Fなど）を複数カンマ区切りで教えてください"
-      followup_prompt: "ユーザーは以下のIPCコードを指定しました: {0}"
-    - text: "特許公開日をYYYY-MM-DD形式で教えてください（例：2015-01-01）"
-      followup_prompt: "ユーザーは公開日を {0} 以降と指定しました"
-    - text: "キーワード（含めたい用語）をカンマ区切りで教えてください"
-      followup_prompt: "ユーザーはキーワードとして {0} を指定しました"
-    - text: "除外したいキーワード（含めない用語）をカンマ区切りで教えてください"
-      followup_prompt: "ユーザーは除外キーワードとして {0} を指定しました"
-    - text: "対象とする国の国コード（例：JP,US,EP）をカンマ区切りで教えてください"
-      followup_prompt: "ユーザーは対象国として {0} を指定しました"
   proposal_prompt: |
-    以下のやり取りをもとに、特許調査の検索パラメータを**厳密なJSON形式**で提案してください。\
-    keys: ipc_codes (リスト), publication_from (YYYY-MM-DD), keywords (リスト), exclude_keywords (リスト), countries (リスト)
-
+    以下のユーザー回答をもとに、特許調査の検索パラメータを**厳密なJSON形式**で提案してください。
+    keys:
+      - ipc_codes: リスト形式で複数のIPCコードを指定（例：B01D, C02F）
+      - publication_from: YYYY-MM-DD形式で公開日下限を指定
+      - countries: 対象国コードのリスト（例：JP, US, EP）
+      - keywords: 検索に含めたいキーワードのリスト
 
 # FAISS インデックス等のパス
 paths:
