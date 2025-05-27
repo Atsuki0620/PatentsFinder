@@ -55,7 +55,6 @@ def question_phase():
     if user_input:
         st.session_state.chat_history.append({'role':'user', 'content': user_input})
         st.session_state.mode = 'proposal'
-        st.experimental_rerun()
 
 
 def proposal_phase():
