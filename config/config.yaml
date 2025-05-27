@@ -14,15 +14,6 @@ bigquery:
   location:         "US"                    # データセットのロケーション
   limit:            100
 
-chat_flow:
-  proposal_prompt: |
-    以下のユーザー回答をもとに、特許調査の検索パラメータを**厳密なJSON形式**で提案してください。
-    keys:
-      - ipc_codes: リスト形式で複数のIPCコードを指定（例：B01D, C02F）
-      - publication_from: YYYY-MM-DD形式で公開日下限を指定
-      - countries: 対象国コードのリスト（例：JP, US, EP）
-      - keywords: 検索に含めたいキーワードのリスト
-
 # FAISS インデックス等のパス
 paths:
   faiss_index:  "data/index/patents.faiss"
@@ -44,3 +35,16 @@ prompts:
     あなたは特許調査の専門家です。
     以下のテキストを、日本語で簡潔に、技術的特徴を保持したまま2行以内で要約してください。
     レスポンスに余計な引用符やマークダウンを含めないでください。
+
+
+chat_flow:
+  initial_prompt: |
+    こんにちは！🚀 どんな特許情報をお探しですか？
+    気になる技術や公開日、調査したい国やキーワードなど、思いつくまま教えてください♪
+  proposal_prompt: |
+    以下のユーザー回答をもとに、特許調査の検索パラメータを**厳密なJSON形式**で提案してください。
+    keys:
+      - ipc_codes: リスト形式で複数のIPCコードを指定（例：B01D, C02F）
+      - publication_from: YYYY-MM-DD形式で公開日下限を指定
+      - countries: 対象国コードのリスト（例：JP, US, EP）
+      - keywords: 検索に含めたいキーワードのリスト
