@@ -6,8 +6,8 @@ import streamlit as st
 from google.oauth2 import service_account
 from src.utils.patent_utils import PatentSearchUtils
 
-# LangChain imports
-from langchain.chat_models.openai import ChatOpenAI
+# LangChain
+from langchain.llms import OpenAI
 from langchain.memory import ConversationBufferMemory
 from langchain import LLMChain, ConversationChain
 from langchain.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate
@@ -29,7 +29,7 @@ llm_model   = config["defaults"]["llm_model"]
 emb_model   = config["defaults"]["embedding_model"]
 
 # LangChain の準備
-chat_llm    = ChatOpenAI(model_name=llm_model, temperature=0)
+chat_llm = OpenAI(model_name=llm_model, temperature=0)
 memory      = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
 
 # チャット用チェーン
