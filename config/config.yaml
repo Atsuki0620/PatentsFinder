@@ -14,6 +14,20 @@ bigquery:
   location:         "US"                    # データセットのロケーション
   limit:            100
 
+
+chat_flow:
+  question_prompt: "どんな特許を調べたいですか？技術内容、公開日、対象国、対象キーワード、除外キーワードなどを指定すると良い検索結果が得られます。"
+  proposal_prompt: |
+    以下のユーザー入力をもとに、特許調査の検索パラメータを**厳密なJSON形式**で生成してください。
+    キー:
+     - ipc_codes: 調査するIPCコードのリスト（例: [\"B01D\",\"C02F\"]）
+     - publication_from: 公開日下限 (\"YYYY-MM-DD\")
+     - keywords: 含めたいキーワードのリスト
+     - exclude_keywords: 除外キーワードのリスト
+     - countries: 対象とする国コードのリスト (例: [\"JP\",\"US\"])
+
+
+
 # FAISS インデックス等のパス
 paths:
   faiss_index:  "data/index/patents.faiss"
