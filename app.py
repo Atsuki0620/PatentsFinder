@@ -33,32 +33,42 @@ def get_utils() -> PatentSearchUtils:
         openai_api_key=openai_key
     )
 
+# 設定とクライアントの準備
 config = load_config()
 utils = get_utils()
 openai_client = utils.openai_client
 llm_model = utils.llm_model
 
-# チャットフロー用プロンプト
 initial_prompt = config["chat_flow"]["initial_prompt"]
 proposal_prompt = config["chat_flow"]["proposal_prompt"]
+
+# ─── セッションステート初期化 ─────────────────────────────────
+if 'mode' not in st.session_state:
+    st.session_state.mode = "question"
+if 'chat_history' not in st.session_state:
+    st.session_state.chat_history = []
+if 'awaiting_confirm' not in st.session_state:
+    st.session_state.awaiting_confirm = False
 
 # ─── チャット描画ヘルパー ────────────────────────────────────
 def render_chat():
     for msg in st.session_state.chat_history:
-        if msg["role"] == "assistant" or msg["role"] == "system":
+        if msg["role"] in ("assistant", "system"):
             st.chat_message("assistant").write(msg["content"])
         else:
             st.chat_message("user").write(msg["content"])
 
 # ─── 質問フェーズ ───────────────────────────────────────────
 def question_phase():
-    # 初期化
-    if "mode" not in st.session_state:
-        st.session_state.mode = "question"
+    # 防御的初期化
+    if 'chat_history' not in st.session_state:
         st.session_state.chat_history = []
+    if 'awaiting_confirm' not in st.session_state:
         st.session_state.awaiting_confirm = False
+    if 'mode' not in st.session_state:
+        st.session_state.mode = "question"
 
-    # 初回だけ初期プロンプトを表示
+    # 初回だけシステムからの案内を表示
     if not st.session_state.chat_history:
         st.session_state.chat_history.append({
             "role": "system",
@@ -67,24 +77,23 @@ def question_phase():
 
     render_chat()
 
-    # ユーザー入力 or 確認モードかで処理を分岐
     if not st.session_state.awaiting_confirm:
         user_input = st.chat_input("自由に入力してください…")
         if user_input:
-            # ユーザー発言を履歴に
+            # ユーザー発言を履歴に追加
             st.session_state.chat_history.append({
                 "role": "user",
                 "content": user_input
             })
             render_chat()
 
-            # 解釈確認用プロンプトを作成して LLM に投げる
+            # 解釈確認用のメッセージを生成
             resp = openai_client.chat.completions.create(
                 model=llm_model,
                 messages=[
                     {
                         "role": "system",
-                        "content": "以下のユーザーの発言を要約し、「こういう意味でお間違いないですか？」という形式で確認文を作成してください。"
+                        "content": "以下のユーザー発言を要約し、「こういう意味でお間違いないですか？」という自然文で確認メッセージを作成してください。"
                     },
                     {"role": "user", "content": user_input}
                 ],
@@ -92,16 +101,15 @@ def question_phase():
             )
             interpretation = resp.choices[0].message.content.strip()
 
-            # 解釈結果をアシスタント発言として追加
+            # 解釈結果を履歴に追加し、確認フェーズへ
             st.session_state.chat_history.append({
                 "role": "assistant",
                 "content": interpretation
             })
             st.session_state.awaiting_confirm = True
             render_chat()
-
     else:
-        # 解釈確認のためのユーザー入力を待つ
+        # ユーザーに「はい/いいえ」で確認
         confirm = st.chat_input("この理解でよろしいですか？「はい」または「いいえ」でご回答ください。")
         if confirm:
             st.session_state.chat_history.append({
@@ -113,21 +121,20 @@ def question_phase():
             if confirm.lower() in ["はい", "yes"]:
                 st.session_state.mode = "proposal"
             else:
-                # 誤解があった場合、再入力を促す
                 st.session_state.chat_history.append({
                     "role": "assistant",
                     "content": "すみません、誤解があったようです。もう一度教えてください！"
                 })
                 render_chat()
-                # stay in question mode
+                # モードは 'question' のままで再入力を待機
 
             st.session_state.awaiting_confirm = False
 
 # ─── 提案フェーズ ───────────────────────────────────────────
 def proposal_phase():
     render_chat()
+    # 一度だけ検索パラメータ JSON を生成
     if "proposal" not in st.session_state:
-        # ユーザーとのやり取りを元に検索パラメータ JSON を生成
         resp = openai_client.chat.completions.create(
             model=llm_model,
             messages=[
@@ -135,15 +142,13 @@ def proposal_phase():
                 *[
                     {"role": m["role"], "content": m["content"]}
                     for m in st.session_state.chat_history
-                    if m["role"] in ("user",)
+                    if m["role"] == "user"
                 ]
             ],
             temperature=0
         )
-        proposal = resp.choices[0].message.content.strip()
-        st.session_state.proposal = proposal
+        st.session_state.proposal = resp.choices[0].message.content.strip()
 
-    # 提案を表示
     st.chat_message("assistant").write("こちらの検索方針でよろしいでしょうか？")
     st.code(st.session_state.proposal, language="json")
 
@@ -151,7 +156,6 @@ def proposal_phase():
     if col1.button("検索実行"):
         st.session_state.mode = "execute"
     if col2.button("修正する"):
-        # 修正リクエスト → 質問フェーズに戻す
         st.session_state.mode = "question"
         st.session_state.chat_history = []
         st.session_state.proposal = None
@@ -159,10 +163,11 @@ def proposal_phase():
 # ─── 実行フェーズ ───────────────────────────────────────────
 def execute_phase():
     render_chat()
-    # proposal（JSON文字列）をパースして検索条件に
+    # JSON を Python dict に
     params = json.loads(st.session_state.proposal)
     query = utils.build_query(params)
     df = utils.search_patents(query)
+
     st.chat_message("assistant").write(f"🔎 検索結果：{len(df)} 件です！")
     st.dataframe(df)
     csv_data = df.to_csv(index=False).encode("utf-8-sig")
@@ -170,10 +175,6 @@ def execute_phase():
 
 # ─── メイン ───────────────────────────────────────────────
 st.title("🔍 特許調査支援システム（チャットUI版）")
-
-# ステート初期化（ユーザーがブラウザをリロードしたとき用）
-if "mode" not in st.session_state:
-    st.session_state.mode = "question"
 
 if st.session_state.mode == "question":
     question_phase()
