@@ -1,176 +1,102 @@
+
 import os
 import json
 import yaml
-import pandas as pd
 import streamlit as st
 from google.oauth2 import service_account
 from src.utils.patent_utils import PatentSearchUtils
 
-# ─── Secrets 取得 ────────────────────────────────────────────
-sa_info = st.secrets.get("GCP_SERVICE_ACCOUNT") or os.getenv("GCP_SERVICE_ACCOUNT")
-if not sa_info:
-    st.error("GCP のサービスアカウント情報が設定されていません。")
-    st.stop()
-credentials = service_account.Credentials.from_service_account_info(json.loads(sa_info))
+# LangChain imports
+from langchain.chat_models import ChatOpenAI
+from langchain.memory import ConversationBufferMemory
+from langchain import LLMChain, ConversationChain
+from langchain.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate
 
-openai_key = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
-if not openai_key:
-    st.error("OpenAI API Key が設定されていません。")
-    st.stop()
-
-# ─── キャッシュリソース定義 ───────────────────────────────────
+# ─── 設定・クライアント初期化 ───────────────────────────────
 @st.cache_resource
-def load_config() -> dict:
-    with open("config/config.yaml", "r", encoding="utf-8") as f:
+def load_config():
+    with open("config/config.yaml", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
-@st.cache_resource
-def get_utils() -> PatentSearchUtils:
-    cfg = load_config()
-    return PatentSearchUtils(
-        config=cfg,
-        credentials=credentials,
-        openai_api_key=openai_key
-    )
+config      = load_config()
+utils       = PatentSearchUtils(config, 
+                                credentials=service_account.Credentials.from_service_account_info(
+                                    json.loads(os.getenv("GCP_SERVICE_ACCOUNT", "{}"))
+                                ),
+                                openai_api_key=os.getenv("OPENAI_API_KEY", "")
+                               )
+llm_model   = config["defaults"]["llm_model"]
+emb_model   = config["defaults"]["embedding_model"]
 
-# ─── 設定とクライアント準備 ─────────────────────────────────
-config = load_config()
-utils = get_utils()
-openai_client = utils.openai_client
-llm_model = utils.llm_model
+# LangChain の準備
+chat_llm    = ChatOpenAI(model_name=llm_model, temperature=0)
+memory      = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
 
-initial_prompt = config["chat_flow"]["initial_prompt"]
-proposal_prompt = config["chat_flow"]["proposal_prompt"]
+# チャット用チェーン
+chat_prompt = ChatPromptTemplate.from_messages([
+    SystemMessagePromptTemplate.from_template(config["chat_flow"]["initial_prompt"]),
+    HumanMessagePromptTemplate.from_template("{user_input}")
+])
+conversation = ConversationChain(
+    llm=chat_llm, 
+    memory=memory, 
+    prompt=chat_prompt
+)
 
-# ─── セッションステート初期化 ─────────────────────────────────
-if "mode" not in st.session_state:
-    st.session_state.mode = "question"
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
-if "awaiting_confirm" not in st.session_state:
-    st.session_state.awaiting_confirm = False
-if "initial_prompt_shown" not in st.session_state:
-    st.session_state.initial_prompt_shown = False
+# 提案（JSON生成）用チェーン
+proposal_prompt = ChatPromptTemplate.from_messages([
+    SystemMessagePromptTemplate.from_template(config["chat_flow"]["proposal_prompt"]),
+    HumanMessagePromptTemplate.from_template("{chat_history}")
+])
+proposal_chain = LLMChain(llm=chat_llm, prompt=proposal_prompt)
 
-# ─── チャット描画ヘルパー ────────────────────────────────────
-def render_chat():
-    for msg in st.session_state.chat_history:
-        role = "assistant" if msg["role"] in ("assistant", "system") else "user"
-        st.chat_message(role).write(msg["content"])
+# ─── UI ────────────────────────────────────────────────────
+st.title("🔍 特許調査支援システム（LangChain版チャットUI）")
 
-# ─── 質問フェーズ ───────────────────────────────────────────
-def question_phase():
-    # 初回は一度だけ初期プロンプトを表示
-    if not st.session_state.initial_prompt_shown:
-        st.session_state.chat_history.append({
-            "role": "assistant",
-            "content": initial_prompt
-        })
-        st.session_state.initial_prompt_shown = True
+# 初期化：Streamlit 再起動直後のみ
+if "ready_for_proposal" not in st.session_state:
+    st.session_state.ready_for_proposal = False
 
-    render_chat()
+# １．チャット入力部
+user_input = st.chat_input("自由に教えてください…")
+if user_input:
+    # ユーザーメッセージを描画
+    st.chat_message("user").write(user_input)
+    # LangChain に投げる
+    ai_response = conversation.predict(user_input=user_input)
+    st.chat_message("assistant").write(ai_response)
 
-    if not st.session_state.awaiting_confirm:
-        user_input = st.chat_input("自由に入力してください…")
-        if user_input:
-            st.session_state.chat_history.append({
-                "role": "user",
-                "content": user_input
-            })
-            render_chat()
+    # 一度でも質問フェーズが終わったら「提案ボタン」を表示
+    st.session_state.ready_for_proposal = True
 
-            # 解釈確認用メッセージを生成
-            resp = openai_client.chat.completions.create(
-                model=llm_model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "以下のユーザー発言を要約し、「こういう意味でお間違いないですか？」という自然文で確認メッセージを作成してください。"
-                    },
-                    {"role": "user", "content": user_input}
-                ],
-                temperature=0
-            )
-            interpretation = resp.choices[0].message.content.strip()
-
-            st.session_state.chat_history.append({
-                "role": "assistant",
-                "content": interpretation
-            })
-            st.session_state.awaiting_confirm = True
-            render_chat()
-
-    else:
-        confirm = st.chat_input("この理解でよろしいですか？「はい」または「いいえ」でご回答ください。")
-        if confirm:
-            st.session_state.chat_history.append({
-                "role": "user",
-                "content": confirm
-            })
-            render_chat()
-
-            if confirm.lower() in ["はい", "yes"]:
-                st.session_state.mode = "proposal"
-            else:
-                # 誤解時は履歴を残して再入力を促す
-                st.session_state.chat_history.append({
-                    "role": "assistant",
-                    "content": "すみません、誤解があったようです。もう一度教えてください！"
-                })
-                render_chat()
-
-            st.session_state.awaiting_confirm = False
-
-# ─── 提案フェーズ ───────────────────────────────────────────
-def proposal_phase():
-    render_chat()
-
-    if "proposal" not in st.session_state:
-        resp = openai_client.chat.completions.create(
-            model=llm_model,
-            messages=[
-                {"role": "system", "content": proposal_prompt},
-                *[
-                    {"role": m["role"], "content": m["content"]}
-                    for m in st.session_state.chat_history
-                    if m["role"] == "user"
-                ]
-            ],
-            temperature=0
-        )
-        st.session_state.proposal = resp.choices[0].message.content.strip()
-
-    st.chat_message("assistant").write("こちらの検索方針でよろしいでしょうか？")
-    st.code(st.session_state.proposal, language="json")
-
+# ２．提案フェーズへの遷移
+if st.session_state.ready_for_proposal:
     col1, col2 = st.columns(2)
-    if col1.button("検索実行"):
-        st.session_state.mode = "execute"
-    if col2.button("修正する"):
-        # 「修正する」時だけ履歴とフラグをリセット
-        st.session_state.chat_history = []
-        st.session_state.initial_prompt_shown = False
-        st.session_state.proposal = None
-        st.session_state.mode = "question"
+    if col1.button("🔧 検索方針を生成する"):
+        # conversation.memory.chat_history は System/Assistant/User メッセージの一覧
+        history = "\n".join(
+            m.content for m in memory.chat_history 
+            if m.type in ("human","ai")
+        )
+        proposal = proposal_chain.run(chat_history=history)
+        st.session_state.proposal = proposal
+        st.session_state.mode = "proposal"
 
-# ─── 実行フェーズ ───────────────────────────────────────────
-def execute_phase():
-    render_chat()
-    params = json.loads(st.session_state.proposal)
-    query = utils.build_query(params)
-    df = utils.search_patents(query)
+    if col2.button("🔄 会話を最初からやり直す"):
+        memory.clear()
+        st.session_state.ready_for_proposal = False
+        if "proposal" in st.session_state:
+            del st.session_state.proposal
+        st.experimental_rerun()
 
-    st.chat_message("assistant").write(f"🔎 検索結果：{len(df)} 件です！")
-    st.dataframe(df)
-    csv_data = df.to_csv(index=False).encode("utf-8-sig")
-    st.download_button("CSV ダウンロード", csv_data, "results.csv", "text/csv")
-
-# ─── メイン ───────────────────────────────────────────────
-st.title("🔍 特許調査支援システム（チャットUI版）")
-
-if st.session_state.mode == "question":
-    question_phase()
-elif st.session_state.mode == "proposal":
-    proposal_phase()
-else:
-    execute_phase()
+# ３．検索実行フェーズ
+if st.session_state.get("mode") == "proposal":
+    st.markdown("### 提案された検索パラメータ（JSON）")
+    st.code(st.session_state.proposal, language="json")
+    if st.button("検索実行"):
+        # JSON をパースして検索
+        params = json.loads(st.session_state.proposal)
+        df = utils.search_patents(utils.build_query(params))
+        st.dataframe(df)
+        csv = df.to_csv(index=False).encode("utf-8-sig")
+        st.download_button("CSVダウンロード", csv, "results.csv", "text/csv")
