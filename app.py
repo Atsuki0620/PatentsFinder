@@ -1,91 +1,92 @@
 import os
 import json
 import yaml
-import pandas as pd
 import streamlit as st
 from google.oauth2 import service_account
 from src.utils.patent_utils import PatentSearchUtils
 
-# ─── Secrets 取得 ────────────────────────────────────────────
-sa_info = st.secrets.get("GCP_SERVICE_ACCOUNT") or os.getenv("GCP_SERVICE_ACCOUNT")
-if not sa_info:
-    st.error("GCP のサービスアカウント情報が設定されていません。GCP_SERVICE_ACCOUNT を設定してください。")
-    st.stop()
-credentials = service_account.Credentials.from_service_account_info(json.loads(sa_info))
-
-openai_key = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
-if not openai_key:
-    st.error("OpenAI API Key が設定されていません。OPENAI_API_KEY を設定してください。")
-    st.stop()
-
+# --- 質問フロー用設定ロード ---
 @st.cache_resource
-def load_config() -> dict:
+def load_config():
     with open("config/config.yaml", "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
+cfg = load_config()
+questions = cfg['chat_flow']['questions']  # 質問リスト
+
+# --- セッションステート初期化 ---
+if 'mode' not in st.session_state:
+    st.session_state.mode = 'question'      # question, proposal, execute
+    st.session_state.step = 0               # 現在の質問インデックス
+    st.session_state.chat_history = []      # 会話履歴
+    st.session_state.proposal = None        # 検索方針
+
+# --- Streamlit Secrets ---
+sa_info = st.secrets.get("GCP_SERVICE_ACCOUNT") or os.getenv("GCP_SERVICE_ACCOUNT")
+credentials = service_account.Credentials.from_service_account_info(json.loads(sa_info))
+openai_key = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
+
 @st.cache_resource
-def get_utils() -> PatentSearchUtils:
-    cfg = load_config()
+def get_utils():
     return PatentSearchUtils(
         config=cfg,
         credentials=credentials,
         openai_api_key=openai_key
     )
 
-def main():
-    st.title("🔍 特許調査支援システム")
-    mode = st.sidebar.radio("検索モード", ["キーワード検索", "類似特許検索"], index=0)
-    if mode == "キーワード検索":
-        keyword_search()
-    else:
-        similar_search()
+# --- フェーズごとの UI ---
+def question_phase():
+    q = questions[st.session_state.step]
+    st.markdown(f"**Q: {q['text']}**")
+    answer = st.text_input("回答を入力してください", key=f"ans_{st.session_state.step}")
+    if st.button("送信", key=f"send_{st.session_state.step}"):
+        st.session_state.chat_history.append({'role': 'user', 'content': answer})
+        st.session_state.chat_history.append({'role': 'system', 'content': q['followup_prompt'].format(answer)})
+        st.session_state.step += 1
+        if st.session_state.step >= len(questions):
+            st.session_state.mode = 'proposal'
+        st.experimental_rerun()
 
-def keyword_search():
+
+def proposal_phase():
     utils = get_utils()
-    user_input = st.text_area("検索条件（自然文）を入力してください", height=120)
-    if not user_input:
-        return
-    if st.button("検索実行"):
-        with st.spinner("検索中…"):
-            try:
-                params = utils.generate_search_params(user_input)
-                st.subheader("📝 生成された検索パラメータ")
-                st.json(params)
-                query = utils.build_query(params)
-                df = utils.search_patents(query)
-                st.subheader(f"🔎 検索結果: {len(df)} 件")
-                st.dataframe(df)
-                csv_data = df.to_csv(index=False).encode('utf-8-sig')
-                st.download_button("CSV ダウンロード", csv_data, "results.csv", "text/csv")
-                utils.build_faiss_index(df)
-                st.success("📦 FAISS インデックスを構築しました")
-            except Exception as e:
-                st.error(f"エラーが発生しました: {e}")
+    # システムプロンプト
+    prompt = cfg['chat_flow']['proposal_prompt']
+    msgs = [{'role':'system','content': prompt}] + st.session_state.chat_history
+    resp = utils.openai_client.chat.completions.create(
+        model=utils.llm_model,
+        messages=msgs,
+        temperature=0
+    )
+    proposal = resp.choices[0].message.content.strip()
+    st.session_state.proposal = proposal
+    st.markdown("**提案された検索方針**")
+    st.write(proposal)
+    col1, col2 = st.columns(2)
+    if col1.button("検索実行"):
+        st.session_state.mode = 'execute'
+        st.experimental_rerun()
+    if col2.button("修正する"):
+        st.session_state.mode = 'question'
+        st.session_state.step = 0
+        st.session_state.chat_history = []
+        st.experimental_rerun()
 
-def similar_search():
+
+def execute_phase():
     utils = get_utils()
-    query = st.text_area("技術内容を入力してください", height=120)
-    if not query:
-        return
-    k = st.slider("類似件数", 1, 10, 5)
-    show_summary = st.checkbox("要約を表示", True)
-    if st.button("類似特許検索実行"):
-        with st.spinner("類似特許検索中…"):
-            try:
-                results = utils.search_similar_patents(query, k)
-                for i, patent in enumerate(results, start=1):
-                    with st.expander(f"{i}. {patent.get('title', 'No Title')}" ):
-                        st.write(f"- 公開番号: {patent.get('publication_number', '')}")
-                        st.write(f"- 出願人: {patent.get('assignees', '')}")
-                        st.write(f"- 抄録: {patent.get('abstract', '')}")
-                        if show_summary:
-                            # 抄録が None の場合は空文字に
-                            abstract_text = patent.get('abstract') or ''
-                            summary      = utils.generate_summary(abstract_text)
-                            st.write(f"🔍 要約: {summary}")
-            except Exception as e:
-                st.error(f"エラーが発生しました: {e}")
+    # ここで proposal から JSON パラメータ抽出 or build_query 実行
+    params = json.loads(st.session_state.proposal)  # proposal に JSON が含まれている想定
+    sql = utils.build_query(params)
+    df = utils.search_patents(sql)
+    st.subheader(f"🔎 検索結果: {len(df)} 件")
+    st.dataframe(df)
 
-if __name__ == "__main__":
-    main()
-
+# --- メイン ---
+st.title("🔍 特許調査支援システム（チャットフロー版）")
+if st.session_state.mode == 'question':
+    question_phase()
+elif st.session_state.mode == 'proposal':
+    proposal_phase()
+else:
+    execute_phase()
