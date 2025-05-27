@@ -33,7 +33,7 @@ def get_utils() -> PatentSearchUtils:
         openai_api_key=openai_key
     )
 
-# 設定とクライアントの準備
+# ─── 設定とクライアント準備 ─────────────────────────────────
 config = load_config()
 utils = get_utils()
 openai_client = utils.openai_client
@@ -49,31 +49,24 @@ if 'chat_history' not in st.session_state:
     st.session_state.chat_history = []
 if 'awaiting_confirm' not in st.session_state:
     st.session_state.awaiting_confirm = False
+if 'initial_prompt_shown' not in st.session_state:
+    st.session_state.initial_prompt_shown = False
 
 # ─── チャット描画ヘルパー ────────────────────────────────────
 def render_chat():
     for msg in st.session_state.chat_history:
-        if msg["role"] in ("assistant", "system"):
-            st.chat_message("assistant").write(msg["content"])
-        else:
-            st.chat_message("user").write(msg["content"])
+        role = "assistant" if msg["role"] in ("assistant","system") else "user"
+        st.chat_message(role).write(msg["content"])
 
 # ─── 質問フェーズ ───────────────────────────────────────────
 def question_phase():
-    # 防御的初期化
-    if 'chat_history' not in st.session_state:
-        st.session_state.chat_history = []
-    if 'awaiting_confirm' not in st.session_state:
-        st.session_state.awaiting_confirm = False
-    if 'mode' not in st.session_state:
-        st.session_state.mode = "question"
-
-    # 初回だけシステムからの案内を表示
-    if not st.session_state.chat_history:
+    # 初回だけ案内を表示
+    if not st.session_state.initial_prompt_shown:
         st.session_state.chat_history.append({
-            "role": "system",
+            "role": "assistant",  # or "system"
             "content": initial_prompt
         })
+        st.session_state.initial_prompt_shown = True
 
     render_chat()
 
@@ -87,7 +80,7 @@ def question_phase():
             })
             render_chat()
 
-            # 解釈確認用のメッセージを生成
+            # 解釈確認用メッセージを生成
             resp = openai_client.chat.completions.create(
                 model=llm_model,
                 messages=[
@@ -101,15 +94,16 @@ def question_phase():
             )
             interpretation = resp.choices[0].message.content.strip()
 
-            # 解釈結果を履歴に追加し、確認フェーズへ
+            # 解釈結果を履歴に追加し、確認状態へ
             st.session_state.chat_history.append({
                 "role": "assistant",
                 "content": interpretation
             })
             st.session_state.awaiting_confirm = True
             render_chat()
+
     else:
-        # ユーザーに「はい/いいえ」で確認
+        # 確認応答を待つ
         confirm = st.chat_input("この理解でよろしいですか？「はい」または「いいえ」でご回答ください。")
         if confirm:
             st.session_state.chat_history.append({
@@ -121,19 +115,19 @@ def question_phase():
             if confirm.lower() in ["はい", "yes"]:
                 st.session_state.mode = "proposal"
             else:
+                # 誤解のときは履歴を残したまま再入力を促す
                 st.session_state.chat_history.append({
                     "role": "assistant",
                     "content": "すみません、誤解があったようです。もう一度教えてください！"
                 })
                 render_chat()
-                # モードは 'question' のままで再入力を待機
+                # mode はそのまま 'question' で次の入力を待機
 
             st.session_state.awaiting_confirm = False
 
 # ─── 提案フェーズ ───────────────────────────────────────────
 def proposal_phase():
     render_chat()
-    # 一度だけ検索パラメータ JSON を生成
     if "proposal" not in st.session_state:
         resp = openai_client.chat.completions.create(
             model=llm_model,
@@ -156,14 +150,15 @@ def proposal_phase():
     if col1.button("検索実行"):
         st.session_state.mode = "execute"
     if col2.button("修正する"):
+        # 履歴とフラグをクリアして最初に戻る
         st.session_state.mode = "question"
         st.session_state.chat_history = []
         st.session_state.proposal = None
+        st.session_state.initial_prompt_shown = False
 
 # ─── 実行フェーズ ───────────────────────────────────────────
 def execute_phase():
     render_chat()
-    # JSON を Python dict に
     params = json.loads(st.session_state.proposal)
     query = utils.build_query(params)
     df = utils.search_patents(query)
