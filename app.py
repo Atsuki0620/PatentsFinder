@@ -8,7 +8,7 @@ from src.utils.patent_utils import PatentSearchUtils
 
 # LangChain
 from langchain_openai import OpenAI          # OpenAI LLM クラス
-from langchain_core.memory import ConversationBufferMemory
+from langchain_community.memory import ConversationBufferMemory
 from langchain_core.prompts import (ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate)
 from langchain.chains import LLMChain, ConversationChain  # chains は meta に依存しない
 
