@@ -7,11 +7,10 @@ from google.oauth2 import service_account
 from src.utils.patent_utils import PatentSearchUtils
 
 # LangChain
-from langchain_community.chat_models import ChatOpenAI
-from langchain.llms import OpenAI
-from langchain.memory import ConversationBufferMemory
-from langchain import LLMChain, ConversationChain
-from langchain.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate
+from langchain_openai import OpenAI          # OpenAI LLM クラス
+from langchain_core.memory import ConversationBufferMemory
+from langchain_core.prompts import (ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate)
+from langchain.chains import LLMChain, ConversationChain  # chains は meta に依存しない
 
 # ─── 設定・クライアント初期化 ───────────────────────────────
 @st.cache_resource
@@ -30,7 +29,7 @@ llm_model   = config["defaults"]["llm_model"]
 emb_model   = config["defaults"]["embedding_model"]
 
 # LangChain の準備
-chat_llm = OpenAI(model_name=llm_model, temperature=0)
+chat_llm = OpenAI(model_name=llm_model, temperature=0, api_key=os.getenv("OPENAI_API_KEY"))
 memory      = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
 
 # チャット用チェーン
